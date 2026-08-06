@@ -17,7 +17,8 @@
     "lint": "next lint",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "test:claude-stdio": "node scripts/test-claude-stdio.mjs"
   },
   "dependencies": {
     "@appica/ui-react": "^1.0.0",

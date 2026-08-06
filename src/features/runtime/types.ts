@@ -1,6 +1,7 @@
 export type RuntimeStatus =
   | "starting"
   | "running"
+  | "waiting_permission"
   | "stopping"
   | "completed"
   | "failed";
@@ -15,6 +16,14 @@ export type RuntimeSnapshot = {
   startedAt: number;
   exitCode: number | null;
   error: string | null;
+};
+
+export type ExternalRuntimeInfo = {
+  active: boolean;
+  pid: number | null;
+  executablePath: string | null;
+  matchKind: string | null;
+  warning: string | null;
 };
 
 export type RuntimeEvent =
@@ -39,6 +48,18 @@ export type RuntimeEvent =
       toolUseId: string;
       output: unknown;
       isError: boolean;
+    }
+  | {
+      type: "permission_requested";
+      runtimeId: string;
+      requestId: string;
+      toolUseId: string | null;
+      tool: string;
+      input: unknown;
+      suggestions: unknown;
+      title: string | null;
+      description: string | null;
+      decisionReason: string | null;
     }
   | {
       type: "usage";
@@ -76,6 +97,19 @@ export type RuntimeTimelineItem =
       input: unknown;
       output: unknown;
       status: "running" | "completed" | "failed";
+    }
+  | {
+      id: string;
+      type: "permission";
+      requestId: string;
+      toolUseId: string | null;
+      tool: string;
+      input: unknown;
+      title: string | null;
+      description: string | null;
+      decisionReason: string | null;
+      status: "pending" | "allowed" | "denied" | "failed";
+      error: string | null;
     };
 
 export type RuntimeUsage = {

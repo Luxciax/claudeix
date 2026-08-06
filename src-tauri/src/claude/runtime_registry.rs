@@ -2,30 +2,38 @@ use crate::claude::event_parser::RuntimeEventParser;
 use crate::claude::locator;
 use crate::claude::scanner::SessionCatalog;
 use crate::models::runtime::{
-    RuntimeEvent, RuntimeSnapshot, RuntimeStartRequest, RuntimeStatus,
+    ExternalRuntimeInfo, PermissionDecisionRequest, RuntimeEvent, RuntimeSnapshot,
+    RuntimeStartRequest, RuntimeStatus,
 };
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
+use sysinfo::System;
 
 const EVENT_NAME: &str = "claudeix://runtime-event";
 
 struct RuntimeEntry {
     snapshot: RuntimeSnapshot,
     child: Option<Arc<Mutex<Child>>>,
+    stdin: Option<Arc<Mutex<ChildStdin>>>,
     lease_key: String,
+}
+
+struct PendingPermission {
+    runtime_id: String,
 }
 
 #[derive(Default)]
 struct RegistryState {
     runtimes: HashMap<String, RuntimeEntry>,
     leases: HashMap<String, String>,
+    pending_permissions: HashMap<String, PendingPermission>,
 }
 
 pub struct RuntimeRegistry {
@@ -74,6 +82,7 @@ impl RuntimeRegistry {
         &self,
         snapshot: RuntimeSnapshot,
         child: Arc<Mutex<Child>>,
+        stdin: Arc<Mutex<ChildStdin>>,
         lease_key: String,
     ) -> Result<(), String> {
         let mut state = self.state.lock().map_err(|error| error.to_string())?;
@@ -82,6 +91,7 @@ impl RuntimeRegistry {
             RuntimeEntry {
                 snapshot,
                 child: Some(child),
+                stdin: Some(stdin),
                 lease_key,
             },
         );
@@ -107,6 +117,85 @@ impl RuntimeRegistry {
                 }
             }
         }
+    }
+
+    fn close_input(&self, runtime_id: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            if let Some(entry) = state.runtimes.get_mut(runtime_id) {
+                entry.stdin = None;
+            }
+        }
+    }
+
+    fn register_permission(&self, runtime_id: &str, request_id: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            let can_register = state
+                .runtimes
+                .get(runtime_id)
+                .map(|entry| {
+                    !matches!(
+                        entry.snapshot.status,
+                        RuntimeStatus::Stopping | RuntimeStatus::Completed | RuntimeStatus::Failed
+                    )
+                })
+                .unwrap_or(false);
+            if !can_register {
+                return;
+            }
+            state.pending_permissions.insert(
+                request_id.to_string(),
+                PendingPermission {
+                    runtime_id: runtime_id.to_string(),
+                },
+            );
+            if let Some(entry) = state.runtimes.get_mut(runtime_id) {
+                entry.snapshot.status = RuntimeStatus::WaitingPermission;
+            }
+        }
+    }
+
+    fn decide_permission(
+        &self,
+        request: &PermissionDecisionRequest,
+    ) -> Result<RuntimeSnapshot, String> {
+        let stdin = {
+            let state = self.state.lock().map_err(|error| error.to_string())?;
+            let pending = state
+                .pending_permissions
+                .get(&request.request_id)
+                .ok_or_else(|| "permission request is no longer pending".to_string())?;
+            if pending.runtime_id != request.runtime_id {
+                return Err("permission request belongs to a different runtime".to_string());
+            }
+            state
+                .runtimes
+                .get(&request.runtime_id)
+                .and_then(|entry| entry.stdin.as_ref())
+                .cloned()
+                .ok_or_else(|| "runtime stdin is not available".to_string())?
+        };
+
+        let response = permission_response(request)?;
+        write_json_line(&stdin, &response)?;
+
+        let mut state = self.state.lock().map_err(|error| error.to_string())?;
+        state.pending_permissions.remove(&request.request_id);
+        let still_waiting = state
+            .pending_permissions
+            .values()
+            .any(|pending| pending.runtime_id == request.runtime_id);
+        let entry = state
+            .runtimes
+            .get_mut(&request.runtime_id)
+            .ok_or_else(|| "runtime not found".to_string())?;
+        if entry.snapshot.status == RuntimeStatus::WaitingPermission {
+            entry.snapshot.status = if still_waiting {
+                RuntimeStatus::WaitingPermission
+            } else {
+                RuntimeStatus::Running
+            };
+        }
+        Ok(entry.snapshot.clone())
     }
 
     fn mark_stopping(&self, runtime_id: &str) -> Result<(RuntimeSnapshot, Arc<Mutex<Child>>), String> {
@@ -145,11 +234,15 @@ impl RuntimeRegistry {
                 RuntimeStatus::Failed
             };
             entry.child = None;
+            entry.stdin = None;
             (entry.lease_key.clone(), entry.snapshot.clone())
         };
         if state.leases.get(&lease_key).map(String::as_str) == Some(runtime_id) {
             state.leases.remove(&lease_key);
         }
+        state
+            .pending_permissions
+            .retain(|_, pending| pending.runtime_id != runtime_id);
         Some(snapshot)
     }
 
@@ -174,6 +267,25 @@ impl RuntimeRegistry {
             .collect::<Vec<_>>();
         snapshots.sort_by(|left, right| right.started_at.cmp(&left.started_at));
         Ok(snapshots)
+    }
+
+    fn owned_pids(&self) -> HashSet<u32> {
+        self.state
+            .lock()
+            .map(|state| {
+                state
+                    .runtimes
+                    .values()
+                    .filter(|entry| {
+                        !matches!(
+                            entry.snapshot.status,
+                            RuntimeStatus::Completed | RuntimeStatus::Failed
+                        )
+                    })
+                    .map(|entry| entry.snapshot.pid)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn stop_all(&self) {
@@ -232,8 +344,99 @@ fn normalized(path: &Path) -> String {
         .to_lowercase()
 }
 
+fn looks_like_claude_process(name: &str, executable: Option<&Path>, command_line: &str) -> bool {
+    let name = name.to_lowercase();
+    let executable = executable
+        .and_then(|path| path.file_name())
+        .map(|value| value.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let command_line = command_line.to_lowercase();
+    matches!(name.as_str(), "claude" | "claude.exe")
+        || matches!(executable.as_str(), "claude" | "claude.exe")
+        || command_line.contains("claude-code")
+        || command_line.contains("claude.cmd")
+        || command_line.contains("claude.exe")
+}
+
+fn external_match_kind(
+    command_line: &str,
+    cwd: Option<&Path>,
+    session_id: &str,
+    workspace: &Path,
+) -> Option<&'static str> {
+    if !session_id.is_empty()
+        && command_line
+            .to_lowercase()
+            .contains(&session_id.to_lowercase())
+    {
+        return Some("session_id");
+    }
+    let workspace = normalized(workspace);
+    if cwd.map(normalized).as_deref() == Some(workspace.as_str()) {
+        return Some("workspace");
+    }
+    None
+}
+
+fn cli_permission_mode(value: &str) -> Result<&'static str, String> {
+    match value {
+        "manual" | "default" => Ok("manual"),
+        "acceptEdits" => Ok("acceptEdits"),
+        "plan" => Ok("plan"),
+        _ => Err("unsupported permission mode".to_string()),
+    }
+}
+
+fn initial_user_message(prompt: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "user",
+        "session_id": "",
+        "message": {
+            "role": "user",
+            "content": [{ "type": "text", "text": prompt }]
+        },
+        "parent_tool_use_id": null
+    })
+}
+
+fn permission_response(request: &PermissionDecisionRequest) -> Result<serde_json::Value, String> {
+    match request.decision.as_str() {
+        "allow" => Ok(serde_json::json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request.request_id,
+                "response": { "behavior": "allow" }
+            }
+        })),
+        "deny" => Ok(serde_json::json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request.request_id,
+                "response": {
+                    "behavior": "deny",
+                    "message": request.message.as_deref().unwrap_or("Denied in Claudeix"),
+                    "interrupt": false
+                }
+            }
+        })),
+        _ => Err("permission decision must be allow or deny".to_string()),
+    }
+}
+
 fn emit(app: &AppHandle, event: RuntimeEvent) {
     let _ = app.emit(EVENT_NAME, event);
+}
+
+fn write_json_line(stdin: &Arc<Mutex<ChildStdin>>, value: &serde_json::Value) -> Result<(), String> {
+    let line = serde_json::to_string(value).map_err(|error| error.to_string())?;
+    let mut stdin = stdin.lock().map_err(|error| error.to_string())?;
+    stdin
+        .write_all(line.as_bytes())
+        .and_then(|_| stdin.write_all(b"\r\n"))
+        .and_then(|_| stdin.flush())
+        .map_err(|error| format!("failed to write to Claude Code stdin: {error}"))
 }
 
 fn terminate_owned_process(pid: u32, child: &Arc<Mutex<Child>>) -> Result<(), String> {
@@ -264,9 +467,7 @@ pub fn runtime_start(
     if prompt.is_empty() {
         return Err("prompt is empty".to_string());
     }
-    if !matches!(request.permission_mode.as_str(), "default" | "acceptEdits" | "plan") {
-        return Err("unsupported permission mode".to_string());
-    }
+    let permission_mode = cli_permission_mode(&request.permission_mode)?;
 
     let workspace = canonical_workspace(&request.workspace_root)?;
     let identity = if let Some(session_key) = request.session_key.as_deref() {
@@ -302,13 +503,16 @@ pub fn runtime_start(
     };
     command.args([
         "-p",
-        prompt,
         "--output-format",
+        "stream-json",
+        "--input-format",
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        "--permission-prompt-tool",
+        "stdio",
         "--permission-mode",
-        request.permission_mode.as_str(),
+        permission_mode,
     ]);
     if let Some(identity) = &identity {
         command.args(["--resume", identity.session_id.as_str()]);
@@ -321,7 +525,7 @@ pub fn runtime_start(
     }
     command
         .current_dir(&workspace)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -340,6 +544,14 @@ pub fn runtime_start(
         }
     };
     let pid = child.id();
+    let stdin = match child.stdin.take() {
+        Some(stdin) => Arc::new(Mutex::new(stdin)),
+        None => {
+            let _ = child.kill();
+            registry.release_reservation(&lease_key, &runtime_id);
+            return Err("Claude Code has no stdin".to_string());
+        }
+    };
     let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
         None => {
@@ -368,11 +580,23 @@ pub fn runtime_start(
         exit_code: None,
         error: None,
     };
-    if let Err(error) = registry.register(snapshot.clone(), Arc::clone(&child), lease_key.clone()) {
+    if let Err(error) = registry.register(
+        snapshot.clone(),
+        Arc::clone(&child),
+        Arc::clone(&stdin),
+        lease_key.clone(),
+    ) {
         registry.release_reservation(&lease_key, &runtime_id);
         if let Ok(mut child) = child.lock() {
             let _ = child.kill();
         }
+        return Err(error);
+    }
+
+    let initial_message = initial_user_message(prompt);
+    if let Err(error) = write_json_line(&stdin, &initial_message) {
+        let _ = terminate_owned_process(pid, &child);
+        let _ = registry.finish(&runtime_id, None, Some(error.clone()));
         return Err(error);
     }
     emit(
@@ -394,13 +618,36 @@ pub fn runtime_start(
             if line.trim().is_empty() {
                 continue;
             }
+            let turn_finished = serde_json::from_str::<serde_json::Value>(&line)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("type")
+                        .and_then(|kind| kind.as_str())
+                        .map(str::to_string)
+                })
+                .as_deref()
+                == Some("result");
             for event in parser.parse_line(&line, stdout_session_key.as_deref()) {
-                if let RuntimeEvent::SessionIdentified { session_id, .. } = &event {
-                    stdout_app
-                        .state::<RuntimeRegistry>()
-                        .identify_session(&stdout_runtime_id, session_id);
+                match &event {
+                    RuntimeEvent::SessionIdentified { session_id, .. } => {
+                        stdout_app
+                            .state::<RuntimeRegistry>()
+                            .identify_session(&stdout_runtime_id, session_id);
+                    }
+                    RuntimeEvent::PermissionRequested { request_id, .. } => {
+                        stdout_app
+                            .state::<RuntimeRegistry>()
+                            .register_permission(&stdout_runtime_id, request_id);
+                    }
+                    _ => {}
                 }
                 emit(&stdout_app, event);
+            }
+            if turn_finished {
+                stdout_app
+                    .state::<RuntimeRegistry>()
+                    .close_input(&stdout_runtime_id);
             }
         }
     });
@@ -487,6 +734,14 @@ pub fn runtime_stop(
 }
 
 #[tauri::command]
+pub fn runtime_permission_decide(
+    registry: State<'_, RuntimeRegistry>,
+    request: PermissionDecisionRequest,
+) -> Result<RuntimeSnapshot, String> {
+    registry.decide_permission(&request)
+}
+
+#[tauri::command]
 pub fn runtime_get(
     registry: State<'_, RuntimeRegistry>,
     runtime_id: String,
@@ -499,6 +754,69 @@ pub fn runtime_list(
     registry: State<'_, RuntimeRegistry>,
 ) -> Result<Vec<RuntimeSnapshot>, String> {
     registry.list()
+}
+
+#[tauri::command]
+pub fn runtime_probe_external(
+    registry: State<'_, RuntimeRegistry>,
+    catalog: State<'_, SessionCatalog>,
+    session_key: String,
+) -> Result<ExternalRuntimeInfo, String> {
+    let identity = catalog
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&session_key)
+        .cloned()
+        .ok_or_else(|| "session is not present in the current catalog".to_string())?;
+    let owned_pids = registry.owned_pids();
+    let current_pid = std::process::id();
+    let system = System::new_all();
+
+    for (pid, process) in system.processes() {
+        let pid = pid.as_u32();
+        if pid == current_pid || owned_pids.contains(&pid) {
+            continue;
+        }
+        let name = process.name();
+        let command_line = process
+            .cmd()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !looks_like_claude_process(&name, process.exe(), &command_line) {
+            continue;
+        }
+        let Some(match_kind) = external_match_kind(
+            &command_line,
+            process.cwd(),
+            &identity.session_id,
+            &identity.workspace_root,
+        ) else {
+            continue;
+        };
+        return Ok(ExternalRuntimeInfo {
+            active: true,
+            pid: Some(pid),
+            executable_path: process
+                .exe()
+                .map(|path| path.to_string_lossy().to_string()),
+            match_kind: Some(match_kind.to_string()),
+            warning: Some(
+                "An external Claude Code process may be writing to this session. Claudeix will not resume it until the external process exits."
+                    .to_string(),
+            ),
+        });
+    }
+
+    Ok(ExternalRuntimeInfo {
+        active: false,
+        pid: None,
+        executable_path: None,
+        match_kind: None,
+        warning: None,
+    })
 }
 
 #[cfg(test)]
@@ -515,5 +833,70 @@ mod tests {
         assert!(error.contains("already running"));
         registry.release_reservation("session:a", "runtime-1");
         registry.reserve_lease("session:a", "runtime-2").unwrap();
+    }
+
+    #[test]
+    fn maps_manual_permission_mode_for_current_cli() {
+        assert_eq!(cli_permission_mode("manual").unwrap(), "manual");
+        assert_eq!(cli_permission_mode("default").unwrap(), "manual");
+        assert!(cli_permission_mode("unknown").is_err());
+    }
+
+    #[test]
+    fn builds_sdk_user_message() {
+        let message = initial_user_message("hello");
+        assert_eq!(message["type"], "user");
+        assert_eq!(message["message"]["role"], "user");
+        assert_eq!(message["message"]["content"][0]["text"], "hello");
+        assert!(message["parent_tool_use_id"].is_null());
+    }
+
+    #[test]
+    fn builds_allow_and_deny_permission_responses() {
+        let allow = permission_response(&PermissionDecisionRequest {
+            runtime_id: "runtime-1".to_string(),
+            request_id: "request-1".to_string(),
+            decision: "allow".to_string(),
+            message: None,
+        })
+        .unwrap();
+        assert_eq!(allow["response"]["response"]["behavior"], "allow");
+
+        let deny = permission_response(&PermissionDecisionRequest {
+            runtime_id: "runtime-1".to_string(),
+            request_id: "request-2".to_string(),
+            decision: "deny".to_string(),
+            message: Some("not now".to_string()),
+        })
+        .unwrap();
+        assert_eq!(deny["response"]["response"]["behavior"], "deny");
+        assert_eq!(deny["response"]["response"]["message"], "not now");
+    }
+
+    #[test]
+    fn detects_external_claude_by_session_or_workspace() {
+        assert!(looks_like_claude_process(
+            "node.exe",
+            None,
+            r#"node C:\npm\node_modules\@cometix\claude-code\cli.js --resume session-1"#,
+        ));
+        assert_eq!(
+            external_match_kind(
+                "claude --resume session-1",
+                None,
+                "session-1",
+                Path::new(r"C:\work"),
+            ),
+            Some("session_id")
+        );
+        assert_eq!(
+            external_match_kind(
+                "claude",
+                Some(Path::new(r"C:\work")),
+                "session-2",
+                Path::new(r"C:\work"),
+            ),
+            Some("workspace")
+        );
     }
 }

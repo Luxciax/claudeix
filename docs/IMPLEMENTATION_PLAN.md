@@ -17,9 +17,12 @@
 
 - 阶段 1 Session Service：已完成；
 - 阶段 2 RuntimeRegistry：已完成；
+- 阶段 3 工具、权限与外部进程检测：已完成；
 - 已实现单会话写入租约、显式 Claude CLI 定位、PID、进程树停止、统一事件协议和结束后磁盘对账；
 - Windows npm 安装优先使用 `node + cli.js`，避免提示词经过 `cmd.exe` 二次解析；
-- 下一实施批次为阶段 3：图形化权限交互与外部 Claude 进程检测。
+- 已实现 `stream-json` 双向 stdin、`can_use_tool` 权限请求、允许 / 拒绝回传、并行权限队列和外部进程探针；
+- 当前本机 Claude Code `2.1.219` 的手动询问模式使用 `manual`，Claudeix 兼容旧值 `default` 并统一映射；
+- 下一实施批次为阶段 4：事务式会话编辑、备份、审计与完整恢复。
 
 ---
 

@@ -32,12 +32,16 @@ Claudeix 是一个面向 Claude Code 的轻量 Windows 桌面客户端。
 - 运行状态、PID、工具执行卡片和进程树停止；
 - 运行结束后重新读取原生 JSONL，与临时流式 UI 对账；
 - Windows npm 安装会绕过 `.cmd`，直接运行 Node CLI 入口；
-- 计划 / 默认 / 接受编辑权限模式；
+- 计划 / 手动询问 / 接受编辑权限模式；
+- Claude Code `stdio` 双向权限协议；
+- Bash、Write、Edit 等工具的允许 / 拒绝卡片；
+- 多个并行权限请求的状态管理；
+- 外部 Claude Code 进程占用检测与发送前复查；
+- 外部进程退出后的手动重新检测；
 - 运行中止。
 
 尚未完成：
 
-- 图形化权限确认和外部 Claude 进程检测；
 - 事务式会话编辑与恢复；
 - 会话重命名、归档、回收站和删除恢复；
 - Git worktree 并行会话；
@@ -62,6 +66,14 @@ irm https://claude.ai/install.ps1 | iex
 pnpm install
 pnpm tauri:dev
 ```
+
+可选的 Claude Code `stdio` 权限拒绝集成测试：
+
+```powershell
+pnpm test:claude-stdio
+```
+
+该测试使用 `--no-session-persistence`，并拒绝测试用 Write 请求，不应创建会话或目标文件。
 
 ## 架构文档
 

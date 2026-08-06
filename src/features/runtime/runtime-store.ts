@@ -27,6 +27,11 @@ type RuntimeState = {
   bindEvents: () => Promise<() => void>;
   start: (request: StartRequest) => Promise<RuntimeSnapshot | null>;
   stop: () => Promise<void>;
+  decidePermission: (
+    requestId: string,
+    decision: "allow" | "deny",
+    message?: string,
+  ) => Promise<void>;
   clearTimeline: () => void;
   reset: () => void;
 };
@@ -159,6 +164,35 @@ export const useRuntimeStore = create<RuntimeState>((set, get) => ({
             return { timeline };
           });
           break;
+        case "permission_requested":
+          set((state) => {
+            const existing = state.timeline.findIndex(
+              (item) => item.type === "permission" && item.requestId === payload.requestId,
+            );
+            const item: RuntimeTimelineItem = {
+              id: `permission-${payload.requestId}`,
+              type: "permission",
+              requestId: payload.requestId,
+              toolUseId: payload.toolUseId,
+              tool: payload.tool,
+              input: payload.input,
+              title: payload.title,
+              description: payload.description,
+              decisionReason: payload.decisionReason,
+              status: "pending",
+              error: null,
+            };
+            const timeline = [...state.timeline];
+            if (existing < 0) timeline.push(item);
+            else timeline[existing] = item;
+            return {
+              timeline,
+              snapshot: state.snapshot
+                ? { ...state.snapshot, status: "waiting_permission" }
+                : state.snapshot,
+            };
+          });
+          break;
         case "usage":
           set({
             usage: {
@@ -265,10 +299,48 @@ export const useRuntimeStore = create<RuntimeState>((set, get) => ({
     const snapshot = await api.stopRuntime(runtimeId);
     set({ snapshot });
   },
+  decidePermission: async (requestId, decision, message) => {
+    const runtimeId = get().snapshot?.runtimeId;
+    if (!runtimeId) return;
+    try {
+      const snapshot = await api.decidePermission({
+        runtimeId,
+        requestId,
+        decision,
+        message: message?.trim() || null,
+      });
+      set((state) => ({
+        snapshot,
+        timeline: state.timeline.map((item) =>
+          item.type === "permission" && item.requestId === requestId
+            ? {
+                ...item,
+                status: decision === "allow" ? "allowed" : "denied",
+                error: null,
+              }
+            : item,
+        ),
+      }));
+    } catch (error) {
+      set((state) => ({
+        timeline: state.timeline.map((item) =>
+          item.type === "permission" && item.requestId === requestId
+            ? { ...item, status: "failed", error: String(error) }
+            : item,
+        ),
+      }));
+    }
+  },
   clearTimeline: () => set({ timeline: [], usage: emptyUsage }),
   reset: () => {
     const status = get().snapshot?.status;
-    if (status === "starting" || status === "running" || status === "stopping") return;
+    if (
+      status === "starting" ||
+      status === "running" ||
+      status === "waiting_permission" ||
+      status === "stopping"
+    )
+      return;
     set({ snapshot: null, timeline: [], usage: emptyUsage });
   },
 }));

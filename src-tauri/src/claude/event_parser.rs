@@ -40,6 +40,7 @@ impl RuntimeEventParser {
         }
 
         match value.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "control_request" => self.parse_control_request(&value, &mut events),
             "assistant" => self.parse_assistant_message(&value, &mut events),
             "user" => self.parse_user_message(&value, &mut events),
             "result" => self.parse_result(&value, &mut events),
@@ -57,6 +58,48 @@ impl RuntimeEventParser {
             }
         }
         events
+    }
+
+    fn parse_control_request(&self, value: &Value, events: &mut Vec<RuntimeEvent>) {
+        let Some(request) = value.get("request") else {
+            return;
+        };
+        if request.get("subtype").and_then(Value::as_str) != Some("can_use_tool") {
+            return;
+        }
+        let Some(request_id) = value.get("request_id").and_then(Value::as_str) else {
+            return;
+        };
+        events.push(RuntimeEvent::PermissionRequested {
+            runtime_id: self.runtime_id.clone(),
+            request_id: request_id.to_string(),
+            tool_use_id: request
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            tool: request
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("Tool")
+                .to_string(),
+            input: request.get("input").cloned().unwrap_or(Value::Null),
+            suggestions: request
+                .get("permission_suggestions")
+                .cloned()
+                .unwrap_or(Value::Null),
+            title: request
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            description: request
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            decision_reason: request
+                .get("decision_reason")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        });
     }
 
     fn parse_stream_event(&mut self, value: &Value, events: &mut Vec<RuntimeEvent>) {
@@ -250,5 +293,19 @@ mod tests {
             None,
         );
         assert!(matches!(finish[0], RuntimeEvent::ToolFinished { .. }));
+    }
+
+    #[test]
+    fn parses_permission_request() {
+        let mut parser = RuntimeEventParser::new("runtime-3");
+        let events = parser.parse_line(
+            r#"{"type":"control_request","request_id":"permission-1","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"tool-1","input":{"command":"git status"},"permission_suggestions":[]}}"#,
+            Some("key-1"),
+        );
+        assert!(matches!(
+            events.first(),
+            Some(RuntimeEvent::PermissionRequested { request_id, tool, .. })
+                if request_id == "permission-1" && tool == "Bash"
+        ));
     }
 }

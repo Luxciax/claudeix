@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, Play, Plus, Square, Terminal } from "lucide-react";
+import { FolderOpen, Play, Plus, RefreshCw, Square, Terminal } from "lucide-react";
 
 import { RuntimeTimeline } from "@/features/runtime/RuntimeTimeline";
 import { useRuntimeStore } from "@/features/runtime/runtime-store";
+import type { ExternalRuntimeInfo } from "@/features/runtime/types";
 import { useSessionStore } from "@/features/sessions/session-store";
 import type { ClaudeStatus } from "@/features/sessions/types";
 import { TranscriptTimeline } from "@/features/transcript/TranscriptTimeline";
@@ -18,7 +19,9 @@ export default function Home() {
     executablePath: null,
   });
   const [draft, setDraft] = useState("");
-  const [permissionMode, setPermissionMode] = useState("default");
+  const [permissionMode, setPermissionMode] = useState("manual");
+  const [externalRuntime, setExternalRuntime] = useState<ExternalRuntimeInfo | null>(null);
+  const [checkingExternal, setCheckingExternal] = useState(false);
 
   const workspace = useSessionStore((state) => state.workspaceRoot);
   const sessions = useSessionStore((state) => state.sessions);
@@ -40,24 +43,30 @@ export default function Home() {
   const bindRuntimeEvents = useRuntimeStore((state) => state.bindEvents);
   const startRuntime = useRuntimeStore((state) => state.start);
   const stopRuntime = useRuntimeStore((state) => state.stop);
+  const decidePermission = useRuntimeStore((state) => state.decidePermission);
   const clearRuntimeTimeline = useRuntimeStore((state) => state.clearTimeline);
   const resetRuntime = useRuntimeStore((state) => state.reset);
 
   const running =
     runtimeSnapshot?.status === "starting" ||
     runtimeSnapshot?.status === "running" ||
+    runtimeSnapshot?.status === "waiting_permission" ||
     runtimeSnapshot?.status === "stopping";
   const runtimeLabel = runtimeSnapshot
     ? runtimeSnapshot.status === "starting"
       ? "Claude Code 启动中…"
       : runtimeSnapshot.status === "running"
         ? `Claude Code 运行中 · PID ${runtimeSnapshot.pid}`
-        : runtimeSnapshot.status === "stopping"
-          ? `正在停止 Claude Code · PID ${runtimeSnapshot.pid}`
-          : runtimeSnapshot.status === "failed"
-            ? `Claude Code 运行失败${runtimeSnapshot.error ? ` · ${runtimeSnapshot.error}` : ""}`
-            : "运行完成，正在与磁盘会话对账"
-    : null;
+        : runtimeSnapshot.status === "waiting_permission"
+          ? `Claude Code 等待权限确认 · PID ${runtimeSnapshot.pid}`
+          : runtimeSnapshot.status === "stopping"
+            ? `正在停止 Claude Code · PID ${runtimeSnapshot.pid}`
+            : runtimeSnapshot.status === "failed"
+              ? `Claude Code 运行失败${runtimeSnapshot.error ? ` · ${runtimeSnapshot.error}` : ""}`
+              : "运行完成，正在与磁盘会话对账"
+    : externalRuntime?.active
+      ? `外部 Claude Code 正在使用此会话 · PID ${externalRuntime.pid ?? "未知"}`
+      : null;
 
   const activeSummary = useMemo(
     () => sessions.find((session) => session.key === activeKey) ?? null,
@@ -123,6 +132,25 @@ export default function Home() {
     };
   }, [completionVersion, workspace, clearRuntimeTimeline]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeKey || running || !isTauriRuntime()) {
+      setExternalRuntime(null);
+      return;
+    }
+    void api
+      .probeExternalRuntime(activeKey)
+      .then((info) => {
+        if (!cancelled) setExternalRuntime(info);
+      })
+      .catch(() => {
+        if (!cancelled) setExternalRuntime(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeKey, running, completionVersion]);
+
   const pickWorkspace = async () => {
     if (running) return;
     const picked = await api.pickWorkspace();
@@ -132,9 +160,31 @@ export default function Home() {
     await scanSessions(root, true);
   };
 
+  const refreshExternalRuntime = async () => {
+    if (!activeKey || !isTauriRuntime()) {
+      setExternalRuntime(null);
+      return null;
+    }
+    setCheckingExternal(true);
+    try {
+      const info = await api.probeExternalRuntime(activeKey);
+      setExternalRuntime(info);
+      return info;
+    } catch {
+      setExternalRuntime(null);
+      return null;
+    } finally {
+      setCheckingExternal(false);
+    }
+  };
+
   const send = async () => {
     const prompt = draft.trim();
     if (!prompt || running || !workspace) return;
+    if (activeKey) {
+      const external = await refreshExternalRuntime();
+      if (external?.active) return;
+    }
     setDraft("");
     await startRuntime({
       workspaceRoot: workspace,
@@ -302,7 +352,7 @@ export default function Home() {
                 color:
                   runtimeSnapshot?.status === "failed"
                     ? "var(--danger)"
-                    : running
+                    : running || externalRuntime?.active
                       ? "var(--warning)"
                       : status.installed
                         ? "var(--success)"
@@ -318,22 +368,43 @@ export default function Home() {
                   : "未检测到 Claude Code")}
             </div>
           </div>
-          <select
-            value={permissionMode}
-            onChange={(event) => setPermissionMode(event.target.value)}
-            disabled={running}
-            style={{
-              border: "1px solid var(--separator)",
-              borderRadius: 8,
-              background: "var(--bg-elevated)",
-              color: "var(--text-primary)",
-              padding: "7px 10px",
-            }}
-          >
-            <option value="default">询问权限</option>
-            <option value="acceptEdits">接受编辑</option>
-            <option value="plan">计划模式</option>
-          </select>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {externalRuntime?.active && (
+              <button
+                onClick={() => void refreshExternalRuntime()}
+                disabled={checkingExternal}
+                title="重新检测外部 Claude Code 进程"
+                style={{
+                  width: 32,
+                  height: 32,
+                  display: "grid",
+                  placeItems: "center",
+                  border: "1px solid var(--separator)",
+                  borderRadius: 8,
+                  background: "var(--bg-elevated)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                <RefreshCw size={14} className={checkingExternal ? "animate-spin" : undefined} />
+              </button>
+            )}
+            <select
+              value={permissionMode}
+              onChange={(event) => setPermissionMode(event.target.value)}
+              disabled={running}
+              style={{
+                border: "1px solid var(--separator)",
+                borderRadius: 8,
+                background: "var(--bg-elevated)",
+                color: "var(--text-primary)",
+                padding: "7px 10px",
+              }}
+            >
+              <option value="manual">询问权限</option>
+              <option value="acceptEdits">接受编辑</option>
+              <option value="plan">计划模式</option>
+            </select>
+          </div>
         </header>
 
         <div style={{ overflow: "auto", padding: "24px max(24px, 10vw)" }}>
@@ -372,7 +443,12 @@ export default function Home() {
           ) : (
             <>
               {detail && <TranscriptTimeline detail={detail} />}
-              <RuntimeTimeline items={runtimeTimeline} />
+              <RuntimeTimeline
+                items={runtimeTimeline}
+                onPermissionDecision={(requestId, decision, message) =>
+                  void decidePermission(requestId, decision, message)
+                }
+              />
             </>
           )}
         </div>
@@ -398,7 +474,13 @@ export default function Home() {
                   void send();
                 }
               }}
-              placeholder={workspace ? "向 Claude Code 描述任务…" : "先选择工作区"}
+              placeholder={
+                externalRuntime?.active
+                  ? "外部 Claude Code 正在使用此会话"
+                  : workspace
+                    ? "向 Claude Code 描述任务…"
+                    : "先选择工作区"
+              }
               disabled={!workspace || !status.installed}
               rows={3}
               style={{
@@ -429,7 +511,7 @@ export default function Home() {
             ) : (
               <button
                 onClick={() => void send()}
-                disabled={!draft.trim() || !workspace || !status.installed}
+                disabled={!draft.trim() || !workspace || !status.installed || checkingExternal}
                 style={{
                   width: 38,
                   height: 38,
@@ -437,7 +519,7 @@ export default function Home() {
                   border: "none",
                   background: "var(--accent)",
                   color: "white",
-                  opacity: !draft.trim() ? 0.45 : 1,
+                  opacity: !draft.trim() || checkingExternal ? 0.45 : 1,
                 }}
               >
                 <Play size={16} />

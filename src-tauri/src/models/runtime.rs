@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum RuntimeStatus {
     Starting,
     Running,
+    WaitingPermission,
     Stopping,
     Completed,
     Failed,
@@ -19,6 +20,25 @@ pub struct RuntimeStartRequest {
     pub permission_mode: String,
     pub model: Option<String>,
     pub effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionDecisionRequest {
+    pub runtime_id: String,
+    pub request_id: String,
+    pub decision: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalRuntimeInfo {
+    pub active: bool,
+    pub pid: Option<u32>,
+    pub executable_path: Option<String>,
+    pub match_kind: Option<String>,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +84,17 @@ pub enum RuntimeEvent {
         tool_use_id: String,
         output: serde_json::Value,
         is_error: bool,
+    },
+    PermissionRequested {
+        runtime_id: String,
+        request_id: String,
+        tool_use_id: Option<String>,
+        tool: String,
+        input: serde_json::Value,
+        suggestions: serde_json::Value,
+        title: Option<String>,
+        description: Option<String>,
+        decision_reason: Option<String>,
     },
     Usage {
         runtime_id: String,
