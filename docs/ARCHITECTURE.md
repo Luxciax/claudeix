@@ -2,178 +2,288 @@
 
 ## 1. 产品定位
 
-Claudeix 是面向 Claude Code 的 Windows 桌面客户端，重点解决四件事：
+Claudeix 是 Claude Code 的专用桌面客户端，不是会话查看器，也不是必须先把会话拖进“工作台”才能运行的调度面板。
 
-1. 按工作区读取、恢复和管理 Claude Code 历史会话；
-2. 在图形界面中运行 Claude Code，并实时展示文本、工具调用和执行状态；
-3. 将权限询问、计划模式、命令执行和错误恢复做成可理解的桌面交互；
-4. 保留轻量桌面壳、最近工作区、托盘和本地优先体验。
+默认流程应当和 Pi Desktop 一样直接：
 
-第一版不做完整 IDE，不内置重型代码编辑器，也不同时适配其他 Agent。
+```text
+选择工作区 → 选择/新建会话 → 直接对话 → 工具执行 → 权限确认
+```
 
-## 2. 总体结构
+Claudeix 只做 Claude Code，一期重点解决：
+
+1. 自动读取 `~/.claude/projects/` 的原生会话；
+2. 在普通会话页直接启动、恢复和停止 Claude Code；
+3. 图形化展示文本、思考状态、工具调用、权限和执行结果；
+4. 安全编辑会话内容，并保留备份、差异和恢复记录；
+5. 后续提供可选的多会话工作台，但不让工作台成为运行前置条件。
+
+## 2. 核心设计决策
+
+### 2.1 普通会话页可直接运行
+
+Monet 将“归档浏览”和“交互运行”拆成两个产品区域，工作台持有运行状态、权限卡片和并行列，因此归档页只读。这是 Monet 的产品与状态管理选择，不是 Claude Code 的技术限制。
+
+Claudeix 改为：
+
+- `ChatView`：默认主界面，单会话直接运行；
+- `WorkbenchView`：可选，多会话并行；
+- `ArchiveView`：搜索、筛选和批量管理。
+
+三个界面共享同一个 `RuntimeRegistry`，不会各自启动一套 Claude 进程。
+
+### 2.2 一个会话只能有一个写入者
+
+Claude Code 同一 session 被多个进程同时恢复时，消息可能交错写入同一 transcript。因此 Claudeix 对每个会话建立写入租约：
+
+```text
+RuntimeKey = claudeConfigDir + canonicalWorkspace + sessionId
+```
+
+状态：
+
+```text
+idle
+starting
+running
+waiting_permission
+stopping
+external_running
+editing
+failed
+```
+
+规则：
+
+- 普通会话页和工作台不能同时拥有同一会话；
+- 已由 Claudeix 运行时，另一个视图只能“接管显示”，不能重复启动；
+- 检测到外部终端正在写入时，只允许跟随读取、停止外部进程或创建分支；
+- 会话编辑期间禁止启动和恢复该会话。
+
+### 2.3 会话读取与会话写入彻底分层
+
+```text
+SessionScanner      只扫描文件和索引
+TranscriptParser   只解析 JSONL
+SessionIndex       保存标题、标签、搜索索引
+RuntimeRegistry    管理 Claude Code 进程
+TranscriptEditor   唯一允许改原始 JSONL 的模块
+```
+
+除 `TranscriptEditor` 外，任何模块不得写入 `~/.claude/projects/`。
+
+## 3. 总体结构
 
 ```text
 Claudeix Desktop
 ├─ Tauri Shell
 │  ├─ window / tray / startup
 │  ├─ workspace persistence
-│  └─ Claude Code sidecar lifecycle
-├─ Claude Bridge
-│  ├─ process spawn / stop / restart
+│  └─ OS process inspection
+├─ Claude Locator
+│  ├─ native install
+│  ├─ npm / winget compatibility
+│  └─ version and health probe
+├─ Runtime Registry
+│  ├─ acquire / release session lease
+│  ├─ spawn / resume / stop
 │  ├─ stream-json parser
-│  ├─ permission request routing
-│  └─ session resume
+│  ├─ permission routing
+│  └─ external process follow
 ├─ Session Service
 │  ├─ discover ~/.claude/projects
-│  ├─ workspace → sessions index
-│  ├─ transcript normalization
-│  └─ rename / archive metadata
+│  ├─ workspace → session index
+│  ├─ transcript parser
+│  ├─ file watcher
+│  └─ metadata / FTS index
+├─ Transcript Editor
+│  ├─ editable-block policy
+│  ├─ optimistic concurrency check
+│  ├─ backup / temp / atomic replace
+│  ├─ JSONL invariant validation
+│  └─ audit / restore
 ├─ Frontend Stores
 │  ├─ workspace
+│  ├─ sessions
 │  ├─ runtime
 │  ├─ chat
-│  ├─ sessions
-│  └─ permissions
+│  ├─ permissions
+│  └─ transcript edits
 └─ React UI
-   ├─ session sidebar
-   ├─ chat timeline
-   ├─ tool cards
-   ├─ permission dialog
-   └─ composer
+   ├─ ChatView
+   ├─ WorkbenchView
+   ├─ ArchiveView
+   ├─ message editor
+   ├─ edit audit drawer
+   └─ tool / permission cards
 ```
 
-## 3. 进程接入方案
+## 4. Claude Code 接入
 
-第一版使用 Claude Code CLI 的非交互流式模式，不解析彩色终端 UI。
-
-建议启动形态：
+第一版继续使用官方 CLI 的非交互流式模式，不解析终端 TUI：
 
 ```text
-claude -p --output-format stream-json --input-format stream-json
+claude -p
+  --output-format stream-json
+  --include-partial-messages
+  --resume <sessionId>
 ```
+
+新会话不传 `--resume`。
 
 后端职责：
 
-- 在选定工作区作为 `cwd` 启动 Claude Code；
-- 每行解析 JSON 事件并转换成 Claudeix 内部事件；
-- 保存当前 Claude session id；
-- 切换历史会话时重启进程并传入恢复参数；
-- 中止任务时只终止 Claudeix 启动的 Claude Code 子进程。
+- 以工作区为 `cwd` 启动 Claude Code；
+- 解析每行 JSON 事件；
+- 保存返回的真实 session id；
+- 将工具、权限、用量和文本转为内部协议；
+- 只终止 Claudeix 自己启动的进程；
+- 运行结束后以磁盘 JSONL 为最终事实源重新对账。
 
-后续可切换到 Claude Agent SDK，但 UI 和内部事件模型不依赖具体接入方式。
+后续可替换为 Agent SDK，但 UI 不直接依赖 CLI 原始字段。
 
-## 4. 内部事件模型
+## 5. 内部运行事件
 
 ```ts
-type ClaudeEvent =
+type RuntimeEvent =
   | { type: "session_started"; sessionId: string; cwd: string }
+  | { type: "assistant_started"; messageId: string }
   | { type: "text_delta"; messageId: string; text: string }
-  | { type: "thinking_delta"; messageId: string; text: string }
+  | { type: "thinking_status"; messageId: string; active: boolean }
   | { type: "tool_started"; id: string; name: string; input: unknown }
   | { type: "tool_finished"; id: string; output: unknown; isError: boolean }
   | { type: "permission_requested"; request: PermissionRequest }
   | { type: "usage"; inputTokens?: number; outputTokens?: number; costUsd?: number }
-  | { type: "completed" }
-  | { type: "failed"; message: string };
+  | { type: "completed"; sessionId: string }
+  | { type: "failed"; message: string; recoverable: boolean };
 ```
 
-前端只消费此事件模型，不直接依赖 Claude CLI 的原始 JSON 字段。
+流式内容是临时展示层；会话完成后必须重新读取原生 JSONL，避免 UI 状态和磁盘记录长期分叉。
 
-## 5. 会话体系
+## 6. 会话体系
 
-### 5.1 数据来源
+### 6.1 数据源
 
-- Claude Code 原生会话：`~/.claude/projects/`；
-- Claudeix 元数据：`~/.claudeix/state.json` 或 SQLite；
-- 不复制和篡改原始 Claude 会话文件。
+| 数据 | 位置 | 权限 |
+|---|---|---|
+| Claude 原生 transcript | `~/.claude/projects/**/*.jsonl` | 默认只读，编辑事务时写入 |
+| Claudeix 索引与元数据 | `~/.claudeix/claudeix.sqlite` | 读写 |
+| 编辑备份 | `~/.claudeix/backups/<sessionId>/` | 读写 |
+| 会话锁 | `~/.claudeix/locks/` | 读写 |
 
-### 5.2 会话索引
+SQLite 只保存：
 
-每个会话至少保存：
+- 会话别名、标签、收藏、归档；
+- transcript 文件指纹；
+- 全文检索索引；
+- 编辑审计记录；
+- UI 和运行时状态。
+
+不复制一份“Claudeix 自有会话正文”作为第二真相源。
+
+### 6.2 会话身份
 
 ```text
-sessionId
-workspaceRoot
-title
-preview
-createdAt
-updatedAt
-sourcePath
-archived
+SessionIdentity
+├─ configDir
+├─ workspaceRoot
+├─ sessionId
+└─ sourcePath
 ```
 
-### 5.3 第一版操作
+不能只用 `sessionId`，因为自定义 `CLAUDE_CONFIG_DIR`、导入会话和不同工作区可能造成路径歧义。
 
-- 按工作区列出历史会话；
-- 打开并恢复会话；
-- 新建会话；
-- 修改 Claudeix 显示标题；
-- 从侧栏移除/归档；
-- 删除原始 Claude 会话暂不开放，避免误删。
+## 7. UI 信息架构
 
-## 6. 权限与安全
-
-第一版支持三种模式：
-
-| 模式 | 行为 |
-|---|---|
-| 询问 | 写文件、执行命令等高影响操作弹窗确认 |
-| 接受编辑 | 文件编辑自动允许，命令仍询问 |
-| 计划 | 只规划，不执行修改 |
-
-`dangerously-skip-permissions` 不进入第一版默认界面，后续作为高级设置加入并显示持续警告。
-
-## 7. UI 布局
+### 7.1 默认聊天页
 
 ```text
 ┌──────────────┬──────────────────────────────────────┐
-│ 工作区/会话  │ 顶栏：工作区 · 模型 · 权限 · 状态   │
+│ 工作区/会话  │ 工作区 · 模型 · 权限 · 运行状态     │
 │              ├──────────────────────────────────────┤
 │ 最近会话     │ 对话时间线                           │
-│              │ ├─ 用户消息                         │
-│              │ ├─ Claude 文本                      │
-│              │ └─ 工具执行卡片                     │
-│              ├──────────────────────────────────────┤
-│ 新建会话     │ 输入框 · 附件 · 停止                 │
+│ 搜索/归档    │ ├─ 用户消息     [编辑]               │
+│              │ ├─ Claude 文本  [高级编辑]           │
+│              │ ├─ 工具卡片                         │
+│              │ └─ 权限卡片                         │
+│ 新建会话     ├──────────────────────────────────────┤
+│ 工作台入口   │ 输入框 · 附件 · 停止                 │
 └──────────────┴──────────────────────────────────────┘
 ```
 
-第一版延续 Pi Desktop 的轻量界面，不保留 Pi 宠物、Pi 插件商店、Pi 模型渠道配置和 Pi 专属协议页面。
+点击历史会话后直接进入可输入状态，不出现“在工作台打开后才能运行”。
 
-## 8. 模块迁移
+### 7.2 工作台
+
+工作台只增加：
+
+- 多列并行会话；
+- 会话监控总览；
+- 跨会话广播；
+- 并行权限处理；
+- 运行队列。
+
+它复用普通聊天页的 `ChatSurface`、`RuntimeRegistry` 和 `PermissionCenter`。
+
+## 8. 会话内容编辑
+
+详细规则见 `docs/SESSION_EDITING.md`。
+
+第一版原则：
+
+- 默认允许编辑用户文本；
+- 助手可见文本放在高级模式；
+- `thinking`、`redacted_thinking`、签名、工具 ID、父子链和元数据不可编辑；
+- 工具调用与工具结果第一版只读；
+- 正在运行或被外部 Claude 进程占用的会话不可编辑；
+- 保存前显示 diff；
+- 每次写入先备份，再用临时文件校验并原子替换；
+- 支持从审计记录一键恢复。
+
+## 9. 权限模型
+
+| 模式 | 行为 |
+|---|---|
+| 询问 | 写文件、命令和高影响操作弹窗确认 |
+| 接受编辑 | 文件编辑自动允许，命令仍询问 |
+| 计划 | 只规划，不执行修改 |
+
+`dangerously-skip-permissions` 不进入第一版默认界面。
+
+## 10. 模块迁移
 
 | Pi Desktop 模块 | Claudeix 处理 |
 |---|---|
 | Tauri 窗口/托盘 | 保留并重命名 |
 | workspace.ts | 保留，去除 Pi 依赖 |
-| SessionSidebar | 保留 UI，替换数据源 |
-| chat.ts | 保留消息状态结构，替换事件解析 |
-| pi_bridge.rs | 重写为 claude_bridge.rs |
-| pi/sessions.ts | 重写为 claude/sessions.ts |
-| Pi 设置/模型/插件 | 第一版移除入口 |
-| 宠物系统 | 第一版禁用，代码后续再剥离 |
+| SessionSidebar | 保留交互，替换数据源 |
+| chat.ts | 拆为 RuntimeStore + TranscriptStore |
+| pi_bridge.rs | 重写为 claude_runtime.rs |
+| pi/sessions.ts | 重写为 session_service.ts |
+| Pi SQLite 会话副本 | 删除，改为 Claude JSONL + 索引 |
+| Pi 设置/模型/插件 | 移除 |
+| 宠物系统 | 移除 |
 
-## 9. 第一版验收标准
+## 11. 第一版验收标准
 
-1. Windows 上自动发现 `claude` 可执行文件；
-2. 可选择并记住默认工作区；
-3. 可读取该工作区已有 Claude Code 会话；
-4. 可恢复会话并继续对话；
-5. 可新建会话、流式输出文本；
-6. 可展示 Bash、Read、Write、Edit 等工具调用卡片；
-7. 可停止当前运行；
-8. 错误明确显示，不静默丢失；
-9. 安装版与便携版都能运行；
-10. 不修改用户原始 Claude 会话文件。
+1. Windows 自动发现 Claude Code；
+2. 选择并记住默认工作区；
+3. 自动读取该工作区已有会话；
+4. 点击历史会话即可直接继续，不需要工作台；
+5. 新建会话并流式输出；
+6. 展示 Bash、Read、Write、Edit 等工具卡片；
+7. 支持停止和权限确认；
+8. 支持用户消息编辑、diff、备份、审计和恢复；
+9. 编辑期间阻止并发运行；
+10. 安装版与便携版可运行。
 
-## 10. 暂不进入第一版
+## 12. 暂不进入第一版
 
-- 内置代码编辑器；
-- Git worktree 并行会话；
+- 任意修改 thinking / redacted thinking；
+- 修改工具调用 ID、工具输入和工具结果；
+- 物理删除任意 JSONL 行；
+- 从任意消息自动重建分支 session；
+- Git worktree 自动隔离；
 - SSH/远程主机；
 - 多 Agent 适配；
-- 云同步；
-- 自动更新签名；
-- MCP 图形化配置中心；
-- 完整会话删除与压缩。
+- 云同步。
