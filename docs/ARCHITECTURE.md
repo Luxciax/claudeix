@@ -15,8 +15,9 @@ Claudeix 只做 Claude Code，一期重点解决：
 1. 自动读取 `~/.claude/projects/` 的原生会话；
 2. 在普通会话页直接启动、恢复和停止 Claude Code；
 3. 图形化展示文本、思考状态、工具调用、权限和执行结果；
-4. 安全编辑会话内容，并保留备份、差异和恢复记录；
-5. 后续提供可选的多会话工作台，但不让工作台成为运行前置条件。
+4. 直接修改 Claude 原始会话内容，并保留备份、差异和完整恢复能力；
+5. 支持会话删除、回收站、冲突恢复和受控永久删除；
+6. 后续提供可选的多会话工作台，但不让工作台成为运行前置条件。
 
 ## 2. 核心设计决策
 
@@ -68,9 +69,10 @@ TranscriptParser   只解析 JSONL
 SessionIndex       保存标题、标签、搜索索引
 RuntimeRegistry    管理 Claude Code 进程
 TranscriptEditor   唯一允许改原始 JSONL 的模块
+TrashService       唯一允许移动或永久删除原始会话文件的模块
 ```
 
-除 `TranscriptEditor` 外，任何模块不得写入 `~/.claude/projects/`。
+除 `TranscriptEditor` 和 `TrashService` 外，任何模块不得改变 `~/.claude/projects/`。
 
 ## 3. 总体结构
 
@@ -102,19 +104,27 @@ Claudeix Desktop
 │  ├─ backup / temp / atomic replace
 │  ├─ JSONL invariant validation
 │  └─ audit / restore
+├─ Trash Service
+│  ├─ ownership scan / delete preview
+│  ├─ journaled move to trash
+│  ├─ conflict-aware restore
+│  ├─ integrity verification
+│  └─ guarded permanent purge
 ├─ Frontend Stores
 │  ├─ workspace
 │  ├─ sessions
 │  ├─ runtime
 │  ├─ chat
 │  ├─ permissions
-│  └─ transcript edits
+│  ├─ transcript edits
+│  └─ trash
 └─ React UI
    ├─ ChatView
    ├─ WorkbenchView
    ├─ ArchiveView
    ├─ message editor
    ├─ edit audit drawer
+   ├─ recycle bin
    └─ tool / permission cards
 ```
 
@@ -170,6 +180,7 @@ type RuntimeEvent =
 | Claudeix 索引与元数据 | `~/.claudeix/claudeix.sqlite` | 读写 |
 | 编辑备份 | `~/.claudeix/backups/<sessionId>/` | 读写 |
 | 会话锁 | `~/.claudeix/locks/` | 读写 |
+| 会话回收站 | `<CLAUDE_CONFIG_DIR>/.claudeix-trash/<trashId>/` | 读写 |
 
 SQLite 只保存：
 
@@ -207,7 +218,7 @@ SessionIdentity
 │              │ ├─ 工具卡片                         │
 │              │ └─ 权限卡片                         │
 │ 新建会话     ├──────────────────────────────────────┤
-│ 工作台入口   │ 输入框 · 附件 · 停止                 │
+│ 回收站/工作台│ 输入框 · 附件 · 停止                 │
 └──────────────┴──────────────────────────────────────┘
 ```
 
@@ -231,6 +242,8 @@ SessionIdentity
 
 第一版原则：
 
+- 保存成功后原始 `sourcePath` 已被修改后的 JSONL 原子替换；
+- Claude Code 后续 resume 直接读取修改后的内容；
 - 默认允许编辑用户文本；
 - 助手可见文本放在高级模式；
 - `thinking`、`redacted_thinking`、签名、工具 ID、父子链和元数据不可编辑；
@@ -240,7 +253,23 @@ SessionIdentity
 - 每次写入先备份，再用临时文件校验并原子替换；
 - 支持从审计记录一键恢复。
 
-## 9. 权限模型
+详细恢复设计包括单次撤销、完整快照恢复和未完成事务启动恢复。
+
+## 9. 会话删除与回收站
+
+详细规则见 `docs/SESSION_TRASH.md`。
+
+第一版原则：
+
+- 会话删除默认是把真实 JSONL 从 Claude projects 移入同配置目录下的 Claudeix 回收站；
+- 删除前列出全部完整路径、大小和用途；
+- 主会话及能够明确归属的子代理文件作为一个事务移动；
+- 回收站默认不自动清空；
+- 恢复回原路径前进行哈希、结构和冲突校验；
+- 原路径冲突时支持“交换恢复”，保证新旧两份内容都不丢；
+- 永久删除需要独立的双重确认。
+
+## 10. 权限模型
 
 | 模式 | 行为 |
 |---|---|
@@ -250,7 +279,7 @@ SessionIdentity
 
 `dangerously-skip-permissions` 不进入第一版默认界面。
 
-## 10. 模块迁移
+## 11. 模块迁移
 
 | Pi Desktop 模块 | Claudeix 处理 |
 |---|---|
@@ -264,7 +293,7 @@ SessionIdentity
 | Pi 设置/模型/插件 | 移除 |
 | 宠物系统 | 移除 |
 
-## 11. 第一版验收标准
+## 12. 第一版验收标准
 
 1. Windows 自动发现 Claude Code；
 2. 选择并记住默认工作区；
@@ -273,11 +302,13 @@ SessionIdentity
 5. 新建会话并流式输出；
 6. 展示 Bash、Read、Write、Edit 等工具卡片；
 7. 支持停止和权限确认；
-8. 支持用户消息编辑、diff、备份、审计和恢复；
-9. 编辑期间阻止并发运行；
-10. 安装版与便携版可运行。
+8. 支持用户消息编辑，且修改真正写回原始 JSONL；
+9. 支持单次撤销、完整快照恢复和故障事务恢复；
+10. 支持会话移入回收站、预览、恢复和冲突交换恢复；
+11. 编辑、删除和恢复期间阻止并发运行；
+12. 安装版与便携版可运行。
 
-## 12. 暂不进入第一版
+## 13. 暂不进入第一版
 
 - 任意修改 thinking / redacted thinking；
 - 修改工具调用 ID、工具输入和工具结果；
