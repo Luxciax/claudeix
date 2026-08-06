@@ -1,4 +1,7 @@
+mod app_paths;
 mod chat_store;
+mod claude;
+mod claude_bridge;
 mod fs_bridge;
 mod pet_window;
 mod pi_bridge;
@@ -8,6 +11,7 @@ mod pi_settings;
 mod projects;
 mod updater;
 mod wsl;
+mod models;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -16,6 +20,8 @@ use tauri::{
 };
 
 use pi_bridge::PiProc;
+use claude_bridge::ClaudeProc;
+use claude::SessionCatalog;
 
 /// Keep the main window fully inside the current monitor's work area: shrink it
 /// if it is larger than the work area, then clamp its position. Without this,
@@ -99,7 +105,7 @@ fn create_tray(app: &App) -> tauri::Result<()> {
 
     TrayIconBuilder::new()
         .icon(icon)
-        .tooltip("Pi")
+        .tooltip("Claudeix")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -187,6 +193,8 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(PiProc::default())
+        .manage(ClaudeProc::default())
+        .manage(SessionCatalog::default())
         .manage(chat_store::ChatDb::default())
         .invoke_handler(tauri::generate_handler![
             chat_store::chat_sessions_list,
@@ -195,6 +203,14 @@ pub fn run() {
             chat_store::chat_session_save,
             chat_store::chat_session_rename,
             chat_store::chat_session_delete,
+            claude_bridge::claude_status,
+            claude_bridge::claude_sessions,
+            claude_bridge::claude_run,
+            claude_bridge::claude_stop,
+            claude::commands::claude_config,
+            claude::commands::session_scan,
+            claude::commands::session_get,
+            claude::commands::session_refresh,
             pi_bridge::pi_start,
             pi_bridge::pi_send,
             pi_bridge::pi_stop,

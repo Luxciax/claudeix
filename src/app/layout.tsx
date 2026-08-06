@@ -1,12 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "streamdown/styles.css";
-import { AppShell } from "@/components/AppShell";
 import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
 
 export const metadata: Metadata = {
-  title: "Pi — Coding Agent",
-  description: "iOS-inspired desktop client for the Pi coding agent",
+  title: "Claudeix",
+  description: "Claude Code desktop session manager",
 };
 
 export const viewport: Viewport = {
@@ -29,9 +28,7 @@ export default function RootLayout({
     <html lang="en" data-theme="dark" className="dark" suppressHydrationWarning>
       <body>
         {/* app-level last resort — Next's global-error breaks output:"export" */}
-        <GlobalErrorBoundary>
-          <AppShell>{children}</AppShell>
-        </GlobalErrorBoundary>
+        <GlobalErrorBoundary>{children}</GlobalErrorBoundary>
       </body>
     </html>
   );

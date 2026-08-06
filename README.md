@@ -1,126 +1,71 @@
-<div align="center">
-  <img src="./src-tauri/icons/icon.svg" alt="Pi Desktop logo" width="120" />
-  <h1>Pi Desktop</h1>
-  <p><b>An iOS-style desktop home for your <code>pi</code> coding agent.</b></p>
-  <p>Chat, terminal, editor, and project files — unified in one frosted-glass window that drives the <i>real</i> <code>pi</code> CLI.</p>
-  <p>
-    <a href="https://github.com/MarshallEriksen-Neura/pi-agent-desktop/releases">Download</a>
-    ·
-    <a href="#quick-start">Quick start</a>
-    ·
-    <a href="#how-it-works">How it works</a>
-    ·
-    <a href="#community--updates">Community</a>
-    ·
-    <a href="./README.zh-CN.md">中文</a>
-  </p>
-</div>
+# Claudeix
 
-<p align="center">
-  <img alt="Release" src="https://img.shields.io/github/v/release/MarshallEriksen-Neura/pi-agent-desktop?label=release" />
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue" />
-  <img alt="Tauri" src="https://img.shields.io/badge/Tauri-v2-2B6CB0" />
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
-</p>
+Claudeix 是一个面向 Claude Code 的轻量 Windows 桌面客户端。
 
-## Demo
+它不是多 Agent 聚合器，也不打算做成重型 IDE。第一阶段专注于：
 
-<div align="center">
-  <video src="./media/pi-video.mp4" controls width="760">
-    Your browser does not support the video tag. You can <a href="./media/pi-video.mp4">download it here</a>.
-  </video>
-  <p><i>Pi Desktop in action — AI chat, the live terminal, and the code editor sharing one workspace.</i></p>
-</div>
+- 选择并记住默认工作区；
+- 发现该工作区已有的 Claude Code 会话；
+- 恢复或新建 Claude Code 会话；
+- 在桌面 UI 中运行 Claude Code；
+- 流式显示输出；
+- 支持计划、询问权限和接受编辑模式；
+- 随时停止当前任务。
 
-## Why Pi Desktop
+## 当前状态
 
-Most "AI coding" tools are either a chat box bolted onto an editor, or a heavy IDE you have to learn. Pi Desktop takes a different line: it is a **thin, native shell that wraps the `pi` CLI you already use** — and makes it feel at home on the desktop.
+`v0.1.0` 试水版本正在开发中，已完成：
 
-- **It runs the real `pi`.** Not a reimplementation and not a web wrapper. The Rust layer spawns `pi --mode rpc` and bridges it over a pipe, so every capability of your CLI is right there.
-- **It gets out of the way.** A borderless, transparent, frosted-glass window with custom controls — built to disappear while you work.
-- **One shared context.** Chat reads the live terminal, the editor shows the code, and files are a sidebar away. Nothing is siloed.
+- Claude Code 环境探测；
+- `~/.claude/projects/` 会话发现；
+- 工作区选择与最近工作区持久化；
+- Claude Code `stream-json` 运行桥；
+- 会话恢复参数；
+- 原生 JSONL 完整历史消息回放；
+- 文本、思考、工具调用、工具结果和未知记录渲染；
+- 坏 JSON 行容错与解析诊断；
+- 子代理文件不会重复显示成主会话；
+- 点击历史会话后可直接继续对话；
+- 基础流式对话界面；
+- 计划 / 默认 / 接受编辑权限模式；
+- 运行中止。
 
-## Features
+尚未完成：
 
-- **iOS-style UI** — borderless / transparent window (mica / acrylic), custom window controls, motion-driven animations.
-- **Real `pi` process** — Rust spawns `pi --mode rpc` and bridges a bidirectional JSONL pipe; a Mock transport lets you preview in the browser.
-- **Built-in terminal** — an xterm terminal shares context with chat, so the agent can see the live shell.
-- **Code editor** — CodeMirror 6 with syntax highlighting and interactive code blocks.
-- **Local-first persistence** — chat history is saved in SQLite and works fully offline.
-- **Built-in auto-update** — `tauri-plugin-updater` produces a signed `latest.json` for one-click in-app updates.
-- **Truly cross-platform** — one build yields Windows (NSIS / MSI), macOS (DMG), and Linux (AppImage / deb / rpm).
+- 图形化权限确认；
+- 事务式会话编辑与恢复；
+- 会话重命名、归档、回收站和删除恢复；
+- Git worktree 并行会话；
+- 自动更新签名。
 
-## Quick start
+## 环境要求
 
-> [!NOTE]
-> Pi Desktop is a GUI for the `pi` CLI. Install `pi` on your machine first — the desktop app drives it in RPC mode.
+- Windows 10/11 x64；
+- 已安装并登录 Claude Code；
+- Node.js 与 pnpm（仅开发时需要）；
+- Rust 与 Visual Studio C++ Build Tools（仅构建时需要）。
 
-Download the latest build for your platform from [GitHub Releases](https://github.com/MarshallEriksen-Neura/pi-agent-desktop/releases).
+Claude Code Windows 安装：
 
-#### Windows
-
-Download `Pi_0.1.0_x64-setup.exe` or `Pi_0.1.0_x64_en-US.msi` and run it.
-
-> [!WARNING]
-> The installers are not code-signed yet. If SmartScreen blocks the first launch, click **Run anyway**.
-
-#### macOS
-
-Download `Pi_0.1.0_aarch64.dmg` or `Pi_0.1.0_x64.dmg`.
-
-> [!WARNING]
-> Apple notarization is not set up yet. On first launch, allow it in **System Settings → Privacy & Security**, or right-click and choose **Open** to bypass Gatekeeper.
-
-#### Linux
-
-Download the `.AppImage` / `.deb` / `.rpm` and install it the usual way.
-
-## How it works
-
-```mermaid
-flowchart LR
-  UI[Next.js UI<br/>chat · terminal · editor] <-->|JSONL pipe| Bridge[Rust pi_bridge]
-  Bridge <-->|stdin / stdout| PI[pi --mode rpc]
-  Bridge -->|pi://line events| Store[(SQLite chat store)]
-  UI -.->|check / download| Updater[tauri-plugin-updater]
+```powershell
+irm https://claude.ai/install.ps1 | iex
 ```
 
-- **Rust bridge** (`src-tauri/src/pi_bridge.rs`) — spawns `pi --mode rpc`, forwards each stdout JSONL line to the frontend as a `pi://line` event (`pi_send` writes back to stdin).
-- **Transport layer** (`src/lib/pi/client.ts`) — `TauriTransport` (real process) / `MockTransport` (browser) are selected at runtime via `isTauri()`.
-- **Protocol** (`src/lib/pi/protocol.ts`) — every RPC command and event, strict JSONL (one JSON object per LF-delimited line).
-- **State** — zustand stores (`usePi` / `chat` / `useUI`); `agent-bridge.ts` maps pi tool events into UI agent-task state.
+## 本地开发
 
-The frontend is a Next.js App Router static export (`output: "export"`) — all pages are client-rendered, and the borderless window chrome is drawn by the app itself.
-
-## Auto-update
-
-The desktop app ships `tauri-plugin-updater`:
-
-- Each CI build generates a `.sig` signature per bundle (minisign; the private key is never committed).
-- A publish script assembles `latest.json` and uploads it to the Release.
-- The in-app `check()` fetches `latest.json`, verifies it, downloads and installs, then relaunches via `tauri-plugin-process`.
-
-## Development
-
-The package manager is pnpm.
-
-```bash
-pnpm install        # install dependencies
-pnpm dev            # Next.js dev server in the browser (uses the mock pi transport)
-pnpm tauri:dev      # full desktop app: starts pnpm dev + the Tauri window (real pi process)
-pnpm build          # Next.js static export to out/
-pnpm tauri:build    # production desktop bundle (runs pnpm build first)
-pnpm lint           # next lint
+```powershell
+pnpm install
+pnpm tauri:dev
 ```
 
-Rust check:
+## 架构文档
 
-```bash
-cd src-tauri && cargo check
-```
+- [架构设计](docs/ARCHITECTURE.md)
+- [开发路线](docs/ROADMAP.md)
+- [具体实现计划](docs/IMPLEMENTATION_PLAN.md)
+- [会话编辑设计](docs/SESSION_EDITING.md)
+- [回收站设计](docs/SESSION_TRASH.md)
 
-## Community & updates
+## 项目基座
 
-We value `sincerity`, `friendliness`, `solidarity`, and `professionalism` — you're welcome to join [LinuxDo](https://linux.do/latest).
-
-Pi Desktop updates are posted at: [GitHub Releases](https://github.com/MarshallEriksen-Neura/pi-agent-desktop/releases)
+Claudeix 从 Pi Desktop 的 Tauri + Next.js 桌面壳演化而来，但使用独立仓库和独立提交历史。后续会逐步移除未使用的 Pi 专属模块。

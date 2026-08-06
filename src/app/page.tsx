@@ -1,182 +1,525 @@
 "use client";
 
-import { useEffect } from "react";
-import dynamic from "next/dynamic";
-import { AnimatePresence, motion } from "motion/react";
-import { useUI } from "@/lib/store";
-import { TopBar } from "@/components/TopBar";
-import { SessionSidebar } from "@/components/SessionSidebar";
-import { AgentPanel } from "@/components/AgentPanel";
-import { CommandPalette } from "@/components/CommandPalette";
-import { ModelPicker } from "@/components/ModelPicker";
-import { Kbd } from "@/components/primitives";
-import { Command, Sparkles } from "lucide-react";
-import { useT } from "@/lib/i18n";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { FolderOpen, Play, Plus, Square, Terminal } from "lucide-react";
 
-/**
- * xterm is only needed once the drawer opens (⌘J). It renders nothing while
- * closed, so there is no placeholder to show — just keep it off the first load.
- */
-const TerminalDrawer = dynamic(
-  () => import("@/components/TerminalDrawer").then((m) => m.TerminalDrawer),
-  { ssr: false },
-);
+import { useSessionStore } from "@/features/sessions/session-store";
+import type { ClaudeStatus } from "@/features/sessions/types";
+import { TranscriptTimeline } from "@/features/transcript/TranscriptTimeline";
+import { useTranscriptStore } from "@/features/transcript/transcript-store";
+import { api, isTauriRuntime } from "@/lib/tauri-api";
 
-const springPanel = { type: "spring" as const, stiffness: 300, damping: 30 };
+type StreamMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+};
+
+function parseClaudeLine(raw: string): { text?: string; sessionId?: string } {
+  try {
+    const event = JSON.parse(raw) as Record<string, unknown>;
+    const sessionId =
+      typeof event.session_id === "string"
+        ? event.session_id
+        : typeof event.sessionId === "string"
+          ? event.sessionId
+          : undefined;
+    const nested = event.event as Record<string, unknown> | undefined;
+    const delta = nested?.delta as Record<string, unknown> | undefined;
+    if (typeof delta?.text === "string") return { text: delta.text, sessionId };
+
+    const message = event.message as Record<string, unknown> | undefined;
+    if (Array.isArray(message?.content)) {
+      const text = message.content
+        .map((item) =>
+          item &&
+          typeof item === "object" &&
+          typeof (item as { text?: unknown }).text === "string"
+            ? (item as { text: string }).text
+            : "",
+        )
+        .join("");
+      if (text) return { text, sessionId };
+    }
+    if (typeof event.result === "string") return { text: event.result, sessionId };
+    return { sessionId };
+  } catch {
+    return {};
+  }
+}
 
 export default function Home() {
-  const {
-    sidebarOpen,
-    zenMode,
-    setCommandPalette,
-    toggleZen,
-    agentRunning,
-  } = useUI();
-  const t = useT();
+  const [status, setStatus] = useState<ClaudeStatus>({
+    installed: false,
+    version: "检测中…",
+  });
+  const [streamMessages, setStreamMessages] = useState<StreamMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [running, setRunning] = useState(false);
+  const [permissionMode, setPermissionMode] = useState("default");
+  const [identifiedSessionId, setIdentifiedSessionId] = useState<string | null>(null);
+  const identifiedSessionIdRef = useRef<string | null>(null);
 
-  // Global keyboard shortcuts (iOS-clean: one modifier, memorable)
+  const workspace = useSessionStore((state) => state.workspaceRoot);
+  const sessions = useSessionStore((state) => state.sessions);
+  const activeKey = useSessionStore((state) => state.activeKey);
+  const sessionLoading = useSessionStore((state) => state.loading);
+  const sessionError = useSessionStore((state) => state.error);
+  const scanSessions = useSessionStore((state) => state.scan);
+  const setActiveKey = useSessionStore((state) => state.setActiveKey);
+
+  const detail = useTranscriptStore((state) => state.detail);
+  const transcriptLoading = useTranscriptStore((state) => state.loading);
+  const transcriptError = useTranscriptStore((state) => state.error);
+  const loadTranscript = useTranscriptStore((state) => state.load);
+  const clearTranscript = useTranscriptStore((state) => state.clear);
+
+  const activeSummary = useMemo(
+    () => sessions.find((session) => session.key === activeKey) ?? null,
+    [sessions, activeKey],
+  );
+  const activeTitle = detail?.summary.title ?? activeSummary?.title ?? "新会话";
+  const activeSessionId = detail?.summary.sessionId ?? identifiedSessionId;
+
+  const updateIdentifiedSession = (sessionId: string | null) => {
+    identifiedSessionIdRef.current = sessionId;
+    setIdentifiedSessionId(sessionId);
+  };
+
+  const selectSession = async (sessionKey: string) => {
+    if (running) return;
+    setActiveKey(sessionKey);
+    setStreamMessages([]);
+    updateIdentifiedSession(null);
+    await loadTranscript(sessionKey);
+  };
+
+  const newSession = () => {
+    if (running) return;
+    setActiveKey(null);
+    clearTranscript();
+    setStreamMessages([]);
+    updateIdentifiedSession(null);
+  };
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setCommandPalette(!useUI.getState().commandPaletteOpen);
-      }
-      if (mod && e.key === ".") {
-        e.preventDefault();
-        toggleZen();
-      }
-      if (mod && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        useUI.getState().toggleTerminal();
-      }
-      if (e.key === "Escape") setCommandPalette(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [setCommandPalette, toggleZen]);
+    if (!isTauriRuntime()) {
+      setStatus({ installed: false, version: "浏览器预览模式" });
+      return;
+    }
 
-  const showSidebar = sidebarOpen && !zenMode;
+    void api.claudeStatus().then(setStatus);
+    void api.workspaceRoot().then((root) => {
+      void useSessionStore.getState().scan(root);
+    });
+
+    const unlisten: Array<() => void> = [];
+    void listen<string>("claude://line", (event) => {
+      const parsed = parseClaudeLine(event.payload);
+      if (parsed.sessionId) {
+        identifiedSessionIdRef.current = parsed.sessionId;
+        setIdentifiedSessionId(parsed.sessionId);
+      }
+      const text = parsed.text;
+      if (!text) return;
+      setStreamMessages((current) => {
+        const last = current[current.length - 1];
+        if (last?.role === "assistant") {
+          return [...current.slice(0, -1), { ...last, text: last.text + text }];
+        }
+        return [...current, { id: crypto.randomUUID(), role: "assistant", text }];
+      });
+    }).then((fn) => unlisten.push(fn));
+
+    void listen<string>("claude://stderr", (event) => {
+      setStreamMessages((current) => [
+        ...current,
+        { id: crypto.randomUUID(), role: "system", text: event.payload },
+      ]);
+    }).then((fn) => unlisten.push(fn));
+
+    void listen<number | null>("claude://exit", async () => {
+      setRunning(false);
+      const sessionState = useSessionStore.getState();
+      const transcriptState = useTranscriptStore.getState();
+      if (!sessionState.workspaceRoot) return;
+
+      const activeBeforeRefresh = sessionState.activeKey;
+      const refreshed = await sessionState.scan(sessionState.workspaceRoot, true);
+      if (
+        activeBeforeRefresh &&
+        refreshed.some((session) => session.key === activeBeforeRefresh)
+      ) {
+        useSessionStore.getState().setActiveKey(activeBeforeRefresh);
+        await transcriptState.refresh(activeBeforeRefresh);
+        setStreamMessages([]);
+        return;
+      }
+
+      const created = refreshed.find(
+        (session) => session.sessionId === identifiedSessionIdRef.current,
+      );
+      if (created) {
+        useSessionStore.getState().setActiveKey(created.key);
+        await transcriptState.load(created.key);
+        setStreamMessages([]);
+      }
+    }).then((fn) => unlisten.push(fn));
+
+    return () => unlisten.forEach((fn) => fn());
+  }, []);
+
+  const pickWorkspace = async () => {
+    if (running) return;
+    const picked = await api.pickWorkspace();
+    if (!picked) return;
+    const root = await api.openWorkspace(picked);
+    newSession();
+    await scanSessions(root, true);
+  };
+
+  const send = async () => {
+    const prompt = draft.trim();
+    if (!prompt || running || !workspace) return;
+    setDraft("");
+    setRunning(true);
+    setStreamMessages((current) => [
+      ...current,
+      { id: crypto.randomUUID(), role: "user", text: prompt },
+    ]);
+    try {
+      await api.runClaude({
+        cwd: workspace,
+        prompt,
+        sessionId: activeSessionId,
+        permissionMode,
+      });
+    } catch (error) {
+      setRunning(false);
+      setStreamMessages((current) => [
+        ...current,
+        { id: crypto.randomUUID(), role: "system", text: String(error) },
+      ]);
+    }
+  };
 
   return (
-    <div
+    <main
       style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        background: zenMode ? "var(--bg-sunken)" : "var(--bg-base)",
-        transition: "background var(--duration-base) var(--spring-smooth)",
+        height: "100vh",
+        display: "grid",
+        gridTemplateColumns: "280px 1fr",
+        background: "var(--bg-base)",
       }}
     >
-      <TopBar />
-
-      <div
+      <aside
         style={{
-          display: "flex",
-          flex: 1,
-          minHeight: 0,
-          overflow: "hidden",
-          position: "relative",
+          borderRight: "1px solid var(--separator)",
+          padding: 16,
+          overflow: "auto",
         }}
       >
-        <AnimatePresence initial={false}>
-          {showSidebar && (
-            <motion.div
-              key="sidebar"
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 248, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={springPanel}
-              style={{ overflow: "hidden", flexShrink: 0 }}
-            >
-              <SessionSidebar />
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {!zenMode && (
-          <motion.div
-            key="agent-main"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+          <div
             style={{
-              display: "flex",
-              flex: 1,
-              minWidth: 0,
-              minHeight: 0,
-              overflow: "hidden",
+              width: 34,
+              height: 34,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center",
+              background: "var(--accent)",
+              color: "white",
+              fontWeight: 700,
             }}
           >
-            <AgentPanel />
-          </motion.div>
+            C
+          </div>
+          <div>
+            <div style={{ fontWeight: 700 }}>Claudeix</div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+              {status.version}
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={pickWorkspace}
+          disabled={running}
+          style={{
+            width: "100%",
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid var(--separator)",
+            background: "var(--bg-elevated)",
+            color: "var(--text-primary)",
+            opacity: running ? 0.55 : 1,
+          }}
+        >
+          <FolderOpen size={15} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {workspace || "选择工作区"}
+          </span>
+        </button>
+
+        <button
+          onClick={newSession}
+          disabled={running}
+          style={{
+            marginTop: 12,
+            width: "100%",
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            padding: "9px 12px",
+            borderRadius: 10,
+            border: "none",
+            background: "transparent",
+            color: "var(--text-primary)",
+            opacity: running ? 0.55 : 1,
+          }}
+        >
+          <Plus size={15} /> 新建会话
+        </button>
+
+        <div
+          style={{
+            marginTop: 16,
+            fontSize: 11,
+            color: "var(--text-tertiary)",
+            padding: "0 8px",
+          }}
+        >
+          历史会话 {sessionLoading ? "· 扫描中" : `· ${sessions.length}`}
+        </div>
+        {sessionError && (
+          <div style={{ margin: "8px", fontSize: 11, color: "var(--danger)" }}>
+            {sessionError}
+          </div>
         )}
-      </div>
+        <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
+          {sessions.map((session) => (
+            <button
+              key={session.key}
+              onClick={() => void selectSession(session.key)}
+              disabled={running}
+              style={{
+                textAlign: "left",
+                border: "none",
+                borderRadius: 10,
+                padding: "10px 11px",
+                background:
+                  activeKey === session.key ? "var(--bg-selected)" : "transparent",
+                color: "var(--text-primary)",
+                opacity: running && activeKey !== session.key ? 0.55 : 1,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 13,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {session.title}
+              </div>
+              <div
+                style={{
+                  marginTop: 3,
+                  fontSize: 11,
+                  color: "var(--text-secondary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {session.preview || `${session.messageCount} 条记录`}
+              </div>
+            </button>
+          ))}
+        </div>
+      </aside>
 
-      <TerminalDrawer />
-
-      {/* Zen-mode floating agent input — the immersive core */}
-      <AnimatePresence>
-        {zenMode && (
-          <>
-            <div className={`zen-title${agentRunning ? " is-working" : ""}`}>π Coding Agent</div>
-            <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 40 }}
-            transition={{ type: "spring", stiffness: 300, damping: 28 }}
-            className="material"
+      <section style={{ minWidth: 0, display: "grid", gridTemplateRows: "56px 1fr auto" }}>
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 20px",
+            borderBottom: "1px solid var(--separator)",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>{activeTitle}</div>
+            <div
+              style={{
+                fontSize: 11,
+                color: status.installed ? "var(--success)" : "var(--warning)",
+              }}
+            >
+              {transcriptLoading
+                ? "正在读取原生会话…"
+                : status.installed
+                  ? detail?.hasBranches
+                    ? "Claude Code 已就绪 · 此会话包含分支"
+                    : "Claude Code 已就绪"
+                  : "未检测到 Claude Code"}
+            </div>
+          </div>
+          <select
+            value={permissionMode}
+            onChange={(event) => setPermissionMode(event.target.value)}
+            disabled={running}
             style={{
-              position: "fixed",
-              bottom: 28,
-              left: "50%",
-              x: "-50%",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              width: 520,
-              maxWidth: "80vw",
-              padding: "12px 18px",
-              borderRadius: 99,
               border: "1px solid var(--separator)",
-              boxShadow: "var(--shadow-lg)",
-              zIndex: 40,
+              borderRadius: 8,
+              background: "var(--bg-elevated)",
+              color: "var(--text-primary)",
+              padding: "7px 10px",
             }}
           >
-            <span style={{ color: "var(--accent)", fontSize: 16 }}><Sparkles size={16} /></span>
-            <input
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                const el = e.target as HTMLInputElement;
-                const text = el.value.trim();
-                if (!text) return;
-                el.value = "";
-                import("@/lib/pi/chat").then(({ useChat }) =>
-                  useChat.getState().send(text)
-                );
+            <option value="default">询问权限</option>
+            <option value="acceptEdits">接受编辑</option>
+            <option value="plan">计划模式</option>
+          </select>
+        </header>
+
+        <div style={{ overflow: "auto", padding: "24px max(24px, 10vw)" }}>
+          {transcriptError && (
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 10,
+                background: "var(--warning-soft)",
+                color: "var(--danger)",
               }}
-              placeholder={agentRunning ? t("zen.busy") : t("zen.idle")}
+            >
+              {transcriptError}
+            </div>
+          )}
+          {!detail && streamMessages.length === 0 && !transcriptLoading ? (
+            <div
+              style={{
+                height: "100%",
+                display: "grid",
+                placeItems: "center",
+                color: "var(--text-secondary)",
+                textAlign: "center",
+              }}
+            >
+              <div>
+                <Terminal size={34} style={{ marginBottom: 14 }} />
+                <div style={{ fontSize: 18, color: "var(--text-primary)" }}>
+                  选择历史会话即可直接继续
+                </div>
+                <div style={{ marginTop: 7, fontSize: 13 }}>
+                  不需要先添加到工作台。新任务也可以直接在下方发送。
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {detail && <TranscriptTimeline detail={detail} />}
+              {streamMessages.map((message) => (
+                <article
+                  key={message.id}
+                  style={{
+                    marginBottom: 18,
+                    marginLeft: message.role === "user" ? "18%" : 0,
+                    padding: "13px 15px",
+                    borderRadius: 14,
+                    background:
+                      message.role === "user"
+                        ? "var(--accent-soft)"
+                        : message.role === "system"
+                          ? "var(--warning-soft)"
+                          : "var(--bg-elevated)",
+                    whiteSpace: "pre-wrap",
+                    lineHeight: 1.6,
+                    fontSize: 14,
+                  }}
+                >
+                  {message.text}
+                </article>
+              ))}
+            </>
+          )}
+        </div>
+
+        <div style={{ padding: "14px max(24px, 10vw) 20px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-end",
+              gap: 10,
+              border: "1px solid var(--separator)",
+              borderRadius: 16,
+              background: "var(--bg-elevated)",
+              padding: 10,
+            }}
+          >
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder={workspace ? "向 Claude Code 描述任务…" : "先选择工作区"}
+              disabled={!workspace || !status.installed}
+              rows={3}
               style={{
                 flex: 1,
+                resize: "none",
                 border: "none",
                 outline: "none",
                 background: "transparent",
-                fontSize: 14,
                 color: "var(--text-primary)",
-                fontFamily: "var(--font-ui)",
+                font: "inherit",
+                padding: 6,
               }}
             />
-            <ModelPicker compact />
-            <Kbd style={{ fontSize: 11, background: "transparent", border: "none" }}>
-              <Command size={10} />.  {t("zen.exit")}
-            </Kbd>
-          </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      <CommandPalette />
-    </div>
+            {running ? (
+              <button
+                onClick={() => void api.stopClaude()}
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  border: "none",
+                  background: "var(--danger)",
+                  color: "white",
+                }}
+              >
+                <Square size={16} />
+              </button>
+            ) : (
+              <button
+                onClick={() => void send()}
+                disabled={!draft.trim() || !workspace || !status.installed}
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  border: "none",
+                  background: "var(--accent)",
+                  color: "white",
+                  opacity: !draft.trim() ? 0.45 : 1,
+                }}
+              >
+                <Play size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+    </main>
   );
 }

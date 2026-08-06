@@ -1,13 +1,13 @@
 {
-  "name": "pi-desktop",
-  "version": "0.5.1",
+  "name": "claudeix",
+  "version": "0.1.0",
   "private": true,
-  "description": "Streamlined desktop client for the Pi agent",
+  "description": "Claude Code desktop session manager",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Luxciax/pi-agent-desktop.git"
+    "url": "https://github.com/Luxciax/claudeix.git"
   },
-  "homepage": "https://github.com/Luxciax/pi-agent-desktop",
+  "homepage": "https://github.com/Luxciax/claudeix",
   "scripts": {
     "predev": "node scripts/gen-pet-manifest.mjs",
     "prebuild": "node scripts/gen-pet-manifest.mjs",

@@ -47,6 +47,7 @@ yarn-error.log*
 .ragcode/
 .omc/
 .omx/
+.local/
 .claude/
 .comate/
 skills-lock.json
