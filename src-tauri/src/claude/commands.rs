@@ -1,8 +1,14 @@
 use crate::claude::config::{self, ClaudeConfigInfo};
+use crate::claude::locator::{self, ClaudeStatus};
 use crate::claude::scanner::{load_session, scan_workspace, SessionCatalog};
 use crate::models::session::{SessionDetail, SessionSummary};
 use std::path::PathBuf;
 use tauri::State;
+
+#[tauri::command]
+pub fn claude_status() -> ClaudeStatus {
+    locator::status()
+}
 
 #[tauri::command]
 pub fn claude_config() -> Result<ClaudeConfigInfo, String> {

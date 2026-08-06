@@ -1,65 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useEffect, useMemo, useState } from "react";
 import { FolderOpen, Play, Plus, Square, Terminal } from "lucide-react";
 
+import { RuntimeTimeline } from "@/features/runtime/RuntimeTimeline";
+import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import { useSessionStore } from "@/features/sessions/session-store";
 import type { ClaudeStatus } from "@/features/sessions/types";
 import { TranscriptTimeline } from "@/features/transcript/TranscriptTimeline";
 import { useTranscriptStore } from "@/features/transcript/transcript-store";
 import { api, isTauriRuntime } from "@/lib/tauri-api";
 
-type StreamMessage = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  text: string;
-};
-
-function parseClaudeLine(raw: string): { text?: string; sessionId?: string } {
-  try {
-    const event = JSON.parse(raw) as Record<string, unknown>;
-    const sessionId =
-      typeof event.session_id === "string"
-        ? event.session_id
-        : typeof event.sessionId === "string"
-          ? event.sessionId
-          : undefined;
-    const nested = event.event as Record<string, unknown> | undefined;
-    const delta = nested?.delta as Record<string, unknown> | undefined;
-    if (typeof delta?.text === "string") return { text: delta.text, sessionId };
-
-    const message = event.message as Record<string, unknown> | undefined;
-    if (Array.isArray(message?.content)) {
-      const text = message.content
-        .map((item) =>
-          item &&
-          typeof item === "object" &&
-          typeof (item as { text?: unknown }).text === "string"
-            ? (item as { text: string }).text
-            : "",
-        )
-        .join("");
-      if (text) return { text, sessionId };
-    }
-    if (typeof event.result === "string") return { text: event.result, sessionId };
-    return { sessionId };
-  } catch {
-    return {};
-  }
-}
-
 export default function Home() {
   const [status, setStatus] = useState<ClaudeStatus>({
     installed: false,
     version: "检测中…",
+    executablePath: null,
   });
-  const [streamMessages, setStreamMessages] = useState<StreamMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [running, setRunning] = useState(false);
   const [permissionMode, setPermissionMode] = useState("default");
-  const [identifiedSessionId, setIdentifiedSessionId] = useState<string | null>(null);
-  const identifiedSessionIdRef = useRef<string | null>(null);
 
   const workspace = useSessionStore((state) => state.workspaceRoot);
   const sessions = useSessionStore((state) => state.sessions);
@@ -75,23 +34,41 @@ export default function Home() {
   const loadTranscript = useTranscriptStore((state) => state.load);
   const clearTranscript = useTranscriptStore((state) => state.clear);
 
+  const runtimeSnapshot = useRuntimeStore((state) => state.snapshot);
+  const runtimeTimeline = useRuntimeStore((state) => state.timeline);
+  const completionVersion = useRuntimeStore((state) => state.completionVersion);
+  const bindRuntimeEvents = useRuntimeStore((state) => state.bindEvents);
+  const startRuntime = useRuntimeStore((state) => state.start);
+  const stopRuntime = useRuntimeStore((state) => state.stop);
+  const clearRuntimeTimeline = useRuntimeStore((state) => state.clearTimeline);
+  const resetRuntime = useRuntimeStore((state) => state.reset);
+
+  const running =
+    runtimeSnapshot?.status === "starting" ||
+    runtimeSnapshot?.status === "running" ||
+    runtimeSnapshot?.status === "stopping";
+  const runtimeLabel = runtimeSnapshot
+    ? runtimeSnapshot.status === "starting"
+      ? "Claude Code 启动中…"
+      : runtimeSnapshot.status === "running"
+        ? `Claude Code 运行中 · PID ${runtimeSnapshot.pid}`
+        : runtimeSnapshot.status === "stopping"
+          ? `正在停止 Claude Code · PID ${runtimeSnapshot.pid}`
+          : runtimeSnapshot.status === "failed"
+            ? `Claude Code 运行失败${runtimeSnapshot.error ? ` · ${runtimeSnapshot.error}` : ""}`
+            : "运行完成，正在与磁盘会话对账"
+    : null;
+
   const activeSummary = useMemo(
     () => sessions.find((session) => session.key === activeKey) ?? null,
     [sessions, activeKey],
   );
   const activeTitle = detail?.summary.title ?? activeSummary?.title ?? "新会话";
-  const activeSessionId = detail?.summary.sessionId ?? identifiedSessionId;
-
-  const updateIdentifiedSession = (sessionId: string | null) => {
-    identifiedSessionIdRef.current = sessionId;
-    setIdentifiedSessionId(sessionId);
-  };
 
   const selectSession = async (sessionKey: string) => {
     if (running) return;
     setActiveKey(sessionKey);
-    setStreamMessages([]);
-    updateIdentifiedSession(null);
+    resetRuntime();
     await loadTranscript(sessionKey);
   };
 
@@ -99,13 +76,12 @@ export default function Home() {
     if (running) return;
     setActiveKey(null);
     clearTranscript();
-    setStreamMessages([]);
-    updateIdentifiedSession(null);
+    resetRuntime();
   };
 
   useEffect(() => {
     if (!isTauriRuntime()) {
-      setStatus({ installed: false, version: "浏览器预览模式" });
+      setStatus({ installed: false, version: "浏览器预览模式", executablePath: null });
       return;
     }
 
@@ -113,62 +89,39 @@ export default function Home() {
     void api.workspaceRoot().then((root) => {
       void useSessionStore.getState().scan(root);
     });
+    let dispose: () => void = () => {};
+    void bindRuntimeEvents().then((unbind) => {
+      dispose = unbind;
+    });
+    return () => dispose();
+  }, []);
 
-    const unlisten: Array<() => void> = [];
-    void listen<string>("claude://line", (event) => {
-      const parsed = parseClaudeLine(event.payload);
-      if (parsed.sessionId) {
-        identifiedSessionIdRef.current = parsed.sessionId;
-        setIdentifiedSessionId(parsed.sessionId);
-      }
-      const text = parsed.text;
-      if (!text) return;
-      setStreamMessages((current) => {
-        const last = current[current.length - 1];
-        if (last?.role === "assistant") {
-          return [...current.slice(0, -1), { ...last, text: last.text + text }];
-        }
-        return [...current, { id: crypto.randomUUID(), role: "assistant", text }];
-      });
-    }).then((fn) => unlisten.push(fn));
-
-    void listen<string>("claude://stderr", (event) => {
-      setStreamMessages((current) => [
-        ...current,
-        { id: crypto.randomUUID(), role: "system", text: event.payload },
-      ]);
-    }).then((fn) => unlisten.push(fn));
-
-    void listen<number | null>("claude://exit", async () => {
-      setRunning(false);
-      const sessionState = useSessionStore.getState();
-      const transcriptState = useTranscriptStore.getState();
-      if (!sessionState.workspaceRoot) return;
-
-      const activeBeforeRefresh = sessionState.activeKey;
-      const refreshed = await sessionState.scan(sessionState.workspaceRoot, true);
-      if (
-        activeBeforeRefresh &&
-        refreshed.some((session) => session.key === activeBeforeRefresh)
-      ) {
-        useSessionStore.getState().setActiveKey(activeBeforeRefresh);
-        await transcriptState.refresh(activeBeforeRefresh);
-        setStreamMessages([]);
+  useEffect(() => {
+    if (completionVersion === 0 || !workspace) return;
+    let cancelled = false;
+    const reconcile = async () => {
+      const previousKey = useSessionStore.getState().activeKey;
+      const sessionId = useRuntimeStore.getState().snapshot?.sessionId;
+      const refreshed = await useSessionStore.getState().scan(workspace, true);
+      if (cancelled) return;
+      if (previousKey && refreshed.some((session) => session.key === previousKey)) {
+        useSessionStore.getState().setActiveKey(previousKey);
+        await useTranscriptStore.getState().refresh(previousKey);
+        clearRuntimeTimeline();
         return;
       }
-
-      const created = refreshed.find(
-        (session) => session.sessionId === identifiedSessionIdRef.current,
-      );
+      const created = refreshed.find((session) => session.sessionId === sessionId);
       if (created) {
         useSessionStore.getState().setActiveKey(created.key);
-        await transcriptState.load(created.key);
-        setStreamMessages([]);
+        await useTranscriptStore.getState().load(created.key);
+        clearRuntimeTimeline();
       }
-    }).then((fn) => unlisten.push(fn));
-
-    return () => unlisten.forEach((fn) => fn());
-  }, []);
+    };
+    void reconcile();
+    return () => {
+      cancelled = true;
+    };
+  }, [completionVersion, workspace, clearRuntimeTimeline]);
 
   const pickWorkspace = async () => {
     if (running) return;
@@ -183,25 +136,12 @@ export default function Home() {
     const prompt = draft.trim();
     if (!prompt || running || !workspace) return;
     setDraft("");
-    setRunning(true);
-    setStreamMessages((current) => [
-      ...current,
-      { id: crypto.randomUUID(), role: "user", text: prompt },
-    ]);
-    try {
-      await api.runClaude({
-        cwd: workspace,
-        prompt,
-        sessionId: activeSessionId,
-        permissionMode,
-      });
-    } catch (error) {
-      setRunning(false);
-      setStreamMessages((current) => [
-        ...current,
-        { id: crypto.randomUUID(), role: "system", text: String(error) },
-      ]);
-    }
+    await startRuntime({
+      workspaceRoot: workspace,
+      sessionKey: activeKey,
+      prompt,
+      permissionMode,
+    });
   };
 
   return (
@@ -359,16 +299,23 @@ export default function Home() {
             <div
               style={{
                 fontSize: 11,
-                color: status.installed ? "var(--success)" : "var(--warning)",
+                color:
+                  runtimeSnapshot?.status === "failed"
+                    ? "var(--danger)"
+                    : running
+                      ? "var(--warning)"
+                      : status.installed
+                        ? "var(--success)"
+                        : "var(--warning)",
               }}
             >
-              {transcriptLoading
+              {runtimeLabel ?? (transcriptLoading
                 ? "正在读取原生会话…"
                 : status.installed
                   ? detail?.hasBranches
                     ? "Claude Code 已就绪 · 此会话包含分支"
                     : "Claude Code 已就绪"
-                  : "未检测到 Claude Code"}
+                  : "未检测到 Claude Code")}
             </div>
           </div>
           <select
@@ -402,7 +349,7 @@ export default function Home() {
               {transcriptError}
             </div>
           )}
-          {!detail && streamMessages.length === 0 && !transcriptLoading ? (
+          {!detail && runtimeTimeline.length === 0 && !transcriptLoading ? (
             <div
               style={{
                 height: "100%",
@@ -425,28 +372,7 @@ export default function Home() {
           ) : (
             <>
               {detail && <TranscriptTimeline detail={detail} />}
-              {streamMessages.map((message) => (
-                <article
-                  key={message.id}
-                  style={{
-                    marginBottom: 18,
-                    marginLeft: message.role === "user" ? "18%" : 0,
-                    padding: "13px 15px",
-                    borderRadius: 14,
-                    background:
-                      message.role === "user"
-                        ? "var(--accent-soft)"
-                        : message.role === "system"
-                          ? "var(--warning-soft)"
-                          : "var(--bg-elevated)",
-                    whiteSpace: "pre-wrap",
-                    lineHeight: 1.6,
-                    fontSize: 14,
-                  }}
-                >
-                  {message.text}
-                </article>
-              ))}
+              <RuntimeTimeline items={runtimeTimeline} />
             </>
           )}
         </div>
@@ -488,7 +414,7 @@ export default function Home() {
             />
             {running ? (
               <button
-                onClick={() => void api.stopClaude()}
+                onClick={() => void stopRuntime()}
                 style={{
                   width: 38,
                   height: 38,

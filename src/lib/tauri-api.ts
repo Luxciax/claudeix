@@ -6,6 +6,7 @@ import type {
   SessionDetail,
   SessionSummary,
 } from "@/features/sessions/types";
+import type { RuntimeSnapshot } from "@/features/runtime/types";
 
 export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -23,11 +24,17 @@ export const api = {
     invoke<SessionDetail>("session_get", { sessionKey }),
   refreshSession: (sessionKey: string) =>
     invoke<SessionDetail>("session_refresh", { sessionKey }),
-  runClaude: (request: {
-    cwd: string;
+  startRuntime: (request: {
+    workspaceRoot: string;
+    sessionKey: string | null;
     prompt: string;
-    sessionId: string | null;
     permissionMode: string;
-  }) => invoke<void>("claude_run", request),
-  stopClaude: () => invoke<void>("claude_stop"),
+    model?: string | null;
+    effort?: string | null;
+  }) => invoke<RuntimeSnapshot>("runtime_start", { request }),
+  stopRuntime: (runtimeId: string) =>
+    invoke<RuntimeSnapshot>("runtime_stop", { runtimeId }),
+  getRuntime: (runtimeId: string) =>
+    invoke<RuntimeSnapshot>("runtime_get", { runtimeId }),
+  listRuntimes: () => invoke<RuntimeSnapshot[]>("runtime_list"),
 };

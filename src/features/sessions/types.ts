@@ -1,6 +1,7 @@
 export type ClaudeStatus = {
   installed: boolean;
   version: string;
+  executablePath: string | null;
 };
 
 export type ClaudeConfig = {

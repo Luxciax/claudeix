@@ -1,7 +1,6 @@
 mod app_paths;
 mod chat_store;
 mod claude;
-mod claude_bridge;
 mod fs_bridge;
 mod pet_window;
 mod pi_bridge;
@@ -20,8 +19,7 @@ use tauri::{
 };
 
 use pi_bridge::PiProc;
-use claude_bridge::ClaudeProc;
-use claude::SessionCatalog;
+use claude::{RuntimeRegistry, SessionCatalog};
 
 /// Keep the main window fully inside the current monitor's work area: shrink it
 /// if it is larger than the work area, then clamp its position. Without this,
@@ -123,6 +121,7 @@ fn create_tray(app: &App) -> tauri::Result<()> {
                 }
             }
             "quit" => {
+                app.state::<RuntimeRegistry>().stop_all();
                 app.exit(0);
             }
             _ => {}
@@ -193,7 +192,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(PiProc::default())
-        .manage(ClaudeProc::default())
+        .manage(RuntimeRegistry::default())
         .manage(SessionCatalog::default())
         .manage(chat_store::ChatDb::default())
         .invoke_handler(tauri::generate_handler![
@@ -203,14 +202,15 @@ pub fn run() {
             chat_store::chat_session_save,
             chat_store::chat_session_rename,
             chat_store::chat_session_delete,
-            claude_bridge::claude_status,
-            claude_bridge::claude_sessions,
-            claude_bridge::claude_run,
-            claude_bridge::claude_stop,
+            claude::commands::claude_status,
             claude::commands::claude_config,
             claude::commands::session_scan,
             claude::commands::session_get,
             claude::commands::session_refresh,
+            claude::runtime_registry::runtime_start,
+            claude::runtime_registry::runtime_stop,
+            claude::runtime_registry::runtime_get,
+            claude::runtime_registry::runtime_list,
             pi_bridge::pi_start,
             pi_bridge::pi_send,
             pi_bridge::pi_stop,
