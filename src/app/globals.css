@@ -1,0 +1,786 @@
+@import "tailwindcss";
+@import "@appica/ui-react/styles.css";
+
+@source "../../node_modules/@appica/ui-react/dist";
+@source "../../node_modules/streamdown/dist/*.js";
+
+/* ============================================================================
+   Pi Coding Agent — Design Tokens (iOS-inspired)
+   Two-tier system: primitives -> semantic tokens. Components use semantics only.
+   ========================================================================== */
+
+:root {
+  /* ── Primitives — iOS system colors (do NOT use directly in components) ── */
+  --ios-blue: #007aff;
+  --ios-blue-dark: #0a84ff;
+  --ios-green: #34c759;
+  --ios-red: #ff3b30;
+  --ios-orange: #ff9500;
+  --ios-purple: #af52de;
+  --ios-teal: #30b0c7;
+
+  --gray-6: #f2f2f7;
+  --gray-5: #e5e5ea;
+  --gray-4: #d1d1d6;
+  --gray-3: #c7c7cc;
+  --gray-2: #aeaeb2;
+  --gray-1: #8e8e93;
+
+  /* ── Semantic — Light ── */
+  /* Backgrounds: three elevations distinguished by tone (iOS depth model) */
+  --bg-base: #ffffff;
+  --bg-elevated: #f2f2f7;
+  --bg-overlay: rgba(242, 242, 247, 0.72);
+  --bg-sunken: #ebebf0;
+
+  /* Materials (glass) — pair with backdrop-filter */
+  --material-thin: rgba(255, 255, 255, 0.6);
+  --material-regular: rgba(255, 255, 255, 0.72);
+  --material-thick: rgba(255, 255, 255, 0.85);
+  --blur-strength: 20px;
+
+  /* Text — opacity tiers, self-adapting over any material */
+  --text-primary: rgba(0, 0, 0, 0.9);
+  --text-secondary: rgba(0, 0, 0, 0.55);
+  --text-tertiary: rgba(0, 0, 0, 0.3);
+  --text-on-accent: #ffffff;
+
+  /* Separators — barely visible (iOS separator) */
+  --separator: rgba(60, 60, 67, 0.12);
+  --separator-opaque: #c6c6c8;
+
+  /* Interaction / accent */
+  --accent: var(--ios-blue);
+  --accent-hover: #0071eb;
+  --accent-muted: rgba(0, 122, 255, 0.12);
+  --focus-ring: rgba(0, 122, 255, 0.4);
+
+  /* Agent / diff semantics */
+  --agent-thinking: var(--ios-purple);
+  --diff-add-bg: rgba(52, 199, 89, 0.14);
+  --diff-add-text: #248a3d;
+
+  /* Terminal / ANSI colors */
+  --ansi-black: #1e1e1e;
+  --ansi-red: #ff3b30;
+  --ansi-green: #34c759;
+  --ansi-yellow: #ff9500;
+  --ansi-blue: #007aff;
+  --ansi-magenta: #af52de;
+  --ansi-cyan: #30b0c7;
+  --ansi-white: #f2f2f7;
+  --ansi-bright-black: #8e8e93;
+  --ansi-bright-red: #ff6961;
+  --ansi-bright-green: #5ac777;
+  --ansi-bright-yellow: #ffb340;
+  --ansi-bright-blue: #409cff;
+  --ansi-bright-magenta: #bf66ff;
+  --ansi-bright-cyan: #5dc1e0;
+  --ansi-bright-white: #ffffff;
+  --diff-remove-bg: rgba(255, 59, 48, 0.12);
+  --diff-remove-text: #c4271e;
+  --danger: var(--ios-red);
+  --warning: var(--ios-orange);
+  --success: var(--ios-green);
+
+  /* Shadows — iOS keeps these very light, overlays only */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.16);
+
+  /* Radii — continuous-curvature feel, generous */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 28px;
+
+  /* Motion — springs, not ease curves */
+  --spring-snappy: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-smooth: cubic-bezier(0.32, 0.72, 0, 1);
+  --duration-fast: 0.25s;
+  --duration-base: 0.4s;
+
+  /* Typography */
+  --font-ui: -apple-system, "SF Pro Text", "SF Pro Display", "Segoe UI",
+    system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", ui-monospace,
+    Menlo, Consolas, monospace;
+
+  /* ── Ink wash accents (models page) ── */
+  --ink-title: rgba(0, 0, 0, 0.9);
+  --ink-accent: #2c5aa0;
+  --ink-border: rgba(60, 60, 67, 0.12);
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --input-bg: rgba(255, 255, 255, 0.55);
+  --ink-paper-bg: radial-gradient(circle at 20% 10%, rgba(44, 90, 160, 0.06) 0%, transparent 40%),
+    linear-gradient(180deg, #f7f5f0 0%, #ede9e1 100%);
+  --ink-hero-bg: radial-gradient(circle at 80% 0%, rgba(44, 90, 160, 0.18) 0%, transparent 50%),
+    radial-gradient(circle at 0% 100%, rgba(196, 92, 72, 0.1) 0%, transparent 45%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.85) 0%, rgba(247, 245, 240, 0.95) 100%);
+  --ink-row-open-bg: rgba(0, 0, 0, 0.01);
+
+  /* ── Desktop pet bubble (宣纸 + iOS) ──
+     Theme-independent on purpose: the pet floats over the user's wallpaper, not
+     over our app surface, so the bubble stays paper in both themes — dark ink on
+     warm paper is the only combination that survives an arbitrary backdrop. */
+  --pet-paper-top: #fbf9f3;
+  --pet-paper-bottom: #efe9db;
+  --pet-ink: #262421;
+  --pet-ink-text: #211f1d;
+  --pet-ink-line: rgba(38, 36, 33, 0.56);
+  /* seal inks: 花青 / 藤黄 / 朱砂 / 焦墨 */
+  --pet-seal-running: #3f6ea8;
+  --pet-seal-waiting: #c9922f;
+  --pet-seal-review: #c1443a;
+  --pet-seal-failed: #2b2724;
+  /* Serif first — 宋体 where it exists, Georgia as the Latin stand-in — so the
+     text reads as brushed rather than as UI chrome. */
+  --pet-bubble-font: "Songti SC", "Source Han Serif SC", "Noto Serif SC", Georgia,
+    "Times New Roman", var(--font-ui);
+
+  color-scheme: light;
+}
+
+/* ── Semantic — Dark (immersive coding surface) ── */
+:root[data-theme="dark"] {
+  /* Dark elevation: higher = lighter (not shadow) */
+  --bg-base: #000000;
+  --bg-elevated: #1c1c1e;
+  --bg-overlay: rgba(28, 28, 30, 0.72);
+  --bg-sunken: #0a0a0a;
+
+  --material-thin: rgba(30, 30, 32, 0.6);
+  --material-regular: rgba(30, 30, 32, 0.72);
+  --material-thick: rgba(30, 30, 32, 0.85);
+
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.55);
+  --text-tertiary: rgba(255, 255, 255, 0.28);
+  --text-on-accent: #ffffff;
+
+  --separator: rgba(84, 84, 88, 0.36);
+  --separator-opaque: #38383a;
+
+  --accent: var(--ios-blue-dark);
+  --accent-hover: #339cff;
+  --accent-muted: rgba(10, 132, 255, 0.18);
+  --focus-ring: rgba(10, 132, 255, 0.5);
+
+  --agent-thinking: var(--ios-purple);
+  --diff-add-bg: rgba(52, 199, 89, 0.14);
+  --diff-add-text: #5ac777;
+  --diff-del-bg: rgba(255, 59, 48, 0.16);
+  --diff-del-text: #ff6961;
+
+  /* Terminal / ANSI colors (dark theme) */
+  --ansi-black: #2d2d2d;
+  --ansi-red: #ff6961;
+  --ansi-green: #5ac777;
+  --ansi-yellow: #ffb340;
+  --ansi-blue: #409cff;
+  --ansi-magenta: #bf66ff;
+  --ansi-cyan: #5dc1e0;
+  --ansi-white: #e5e5ea;
+  --ansi-bright-black: #636366;
+  --ansi-bright-red: #ff8a80;
+  --ansi-bright-green: #72d687;
+  --ansi-bright-yellow: #ffc570;
+  --ansi-bright-blue: #60acff;
+  --ansi-bright-magenta: #cf88ff;
+  --ansi-bright-cyan: #7dd4f0;
+  --ansi-bright-white: #ffffff;
+
+  --agent-thinking: #bf5af2;
+  --diff-add-bg: rgba(52, 199, 89, 0.18);
+  --diff-add-text: #30d158;
+  --diff-remove-bg: rgba(255, 69, 58, 0.18);
+  --diff-remove-text: #ff453a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+
+  /* ── Ink wash accents (models page, dark) ── */
+  --ink-title: rgba(255, 255, 255, 0.92);
+  --ink-accent: #5c9dff;
+  --ink-border: rgba(84, 84, 88, 0.36);
+  --card-bg: rgba(28, 28, 30, 0.72);
+  --input-bg: rgba(28, 28, 30, 0.55);
+  --ink-paper-bg: radial-gradient(circle at 20% 10%, rgba(255, 255, 255, 0.04) 0%, transparent 40%),
+    linear-gradient(180deg, #121212 0%, #0f0f0f 100%);
+  --ink-hero-bg: radial-gradient(circle at 80% 0%, rgba(44, 90, 160, 0.25) 0%, transparent 50%),
+    radial-gradient(circle at 0% 100%, rgba(196, 92, 72, 0.12) 0%, transparent 45%),
+    linear-gradient(135deg, rgba(30, 30, 30, 0.85) 0%, rgba(20, 20, 20, 0.95) 100%);
+  --ink-row-open-bg: rgba(255, 255, 255, 0.02);
+
+  color-scheme: dark;
+}
+
+/* ── Appica UI bridge ─────────────────────────────────────────────────────
+   Map Appica's raw tokens onto our iOS token system so every Appica
+   component (Switch, Dialog, Toast, …) renders in the Pi/iOS skin.
+   Appica themes via .light/.dark classes; our toggleTheme keeps the .dark
+   class on <html> in sync with data-theme.                                */
+:root,
+.light {
+  --primary: var(--ios-blue);
+  --primary-foreground: #ffffff;
+  --background: var(--bg-base);
+  --foreground: var(--text-primary);
+  --muted: var(--bg-elevated);
+  --muted-foreground: var(--text-secondary);
+  --border: var(--separator);
+  --ring: var(--focus-ring);
+  --destructive: var(--danger);
+  --radius: 0.75rem; /* 12px — matches --radius-md */
+  --font-sans: var(--font-ui);
+}
+
+:root[data-theme="dark"],
+.dark {
+  --primary: var(--ios-blue-dark);
+  --primary-foreground: #ffffff;
+  --background: var(--bg-base);
+  --foreground: var(--text-primary);
+  --muted: var(--bg-elevated);
+  --muted-foreground: var(--text-secondary);
+  --border: var(--separator);
+  --ring: var(--focus-ring);
+  --destructive: var(--danger);
+}
+
+/* Expose semantic tokens to Tailwind v4 utilities (bg-base, text-primary, ...) */
+@theme inline {
+  --color-base: var(--bg-base);
+  --color-elevated: var(--bg-elevated);
+  --color-sunken: var(--bg-sunken);
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-tertiary: var(--text-tertiary);
+  --color-accent: var(--accent);
+  --color-separator: var(--separator);
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-mono);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+}
+
+/* ── Base reset ── */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-optical-sizing: auto;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background var(--duration-base) var(--spring-smooth);
+}
+
+/* ── Reusable material (iOS glass) ── */
+.material {
+  background: var(--material-regular);
+  backdrop-filter: blur(var(--blur-strength)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--blur-strength)) saturate(180%);
+}
+
+.material-thin {
+  background: var(--material-thin);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+}
+
+/* ── Thin iOS-style scrollbar ── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--text-tertiary);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Interactive rows (hover feedback) ── */
+.pi-row:hover {
+  background: var(--separator) !important;
+}
+.pi-row--selected:hover {
+  background: var(--accent-muted) !important;
+}
+
+/* ── Focus ring ── */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* Composer textarea already gets its focus state from the rounded wrapper,
+   so suppress its global focus ring to keep the outline shape consistent. */
+.composer-textarea:focus-visible {
+  box-shadow: none;
+}
+
+/* ── Status screens (404 / error / loading) ─────────────────────────────
+   The state pages speak in Pi's own idiom: a terminal transcript with a
+   blinking block caret, and "thinking" dots that reuse the agent's purple. */
+@keyframes pi-caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pi-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.pi-caret {
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+  margin-left: 8px;
+  vertical-align: -2px;
+  background: currentColor;
+  animation: pi-caret-blink 1.1s step-end infinite;
+}
+
+.pi-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--agent-thinking);
+  animation: pi-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* a 0.01ms blink would flicker — hold both steady instead */
+  .pi-caret {
+    animation: none;
+  }
+  .pi-status-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* ── Respect reduced-motion (iOS accessibility) ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Agent activity lines ───────────────────────────────────────────────
+   The compact "one line per action" idiom: a small spoke indicator while a
+   step runs, and a shimmer on the label during the wait for the first token.
+   Both are CSS-driven so a row costs nothing to keep on screen. */
+@keyframes pi-spark-fade {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes pi-shimmer {
+  to {
+    background-position: -200% center;
+  }
+}
+
+@keyframes pi-icon-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.pi-spark-spoke {
+  animation: pi-spark-fade 0.8s linear infinite;
+}
+
+.pi-icon-breathe {
+  animation: pi-icon-breathe 1.4s ease-in-out infinite;
+}
+
+.pi-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--text-tertiary) 25%,
+    var(--text-primary) 45%,
+    var(--text-tertiary) 65%
+  );
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: pi-shimmer 2.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* the global rule above only shortens durations, and a running animation still
+     wins over plain declarations — drop the animation by name, then pin a
+     legible static state. */
+  .pi-spark-spoke {
+    animation-name: none;
+    opacity: 0.8;
+  }
+  .pi-icon-breathe {
+    animation-name: none;
+    opacity: 1;
+  }
+  .pi-shimmer {
+    animation-name: none;
+    background-image: none;
+    color: var(--text-secondary);
+    -webkit-text-fill-color: var(--text-secondary);
+  }
+}
+
+/* ── ANSI color classes (ansi_up) ── */
+.ansi-black-fg { color: var(--ansi-black); }
+.ansi-red-fg { color: var(--ansi-red); }
+.ansi-green-fg { color: var(--ansi-green); }
+.ansi-yellow-fg { color: var(--ansi-yellow); }
+.ansi-blue-fg { color: var(--ansi-blue); }
+.ansi-magenta-fg { color: var(--ansi-magenta); }
+.ansi-cyan-fg { color: var(--ansi-cyan); }
+.ansi-white-fg { color: var(--ansi-white); }
+.ansi-bright-black-fg { color: var(--ansi-bright-black); }
+.ansi-bright-red-fg { color: var(--ansi-bright-red); }
+.ansi-bright-green-fg { color: var(--ansi-bright-green); }
+.ansi-bright-yellow-fg { color: var(--ansi-bright-yellow); }
+.ansi-bright-blue-fg { color: var(--ansi-bright-blue); }
+.ansi-bright-magenta-fg { color: var(--ansi-bright-magenta); }
+.ansi-bright-cyan-fg { color: var(--ansi-bright-cyan); }
+.ansi-bright-white-fg { color: var(--ansi-bright-white); }
+
+.ansi-black-bg { background-color: var(--ansi-black); }
+.ansi-red-bg { background-color: var(--ansi-red); }
+.ansi-green-bg { background-color: var(--ansi-green); }
+.ansi-yellow-bg { background-color: var(--ansi-yellow); }
+.ansi-blue-bg { background-color: var(--ansi-blue); }
+.ansi-magenta-bg { background-color: var(--ansi-magenta); }
+.ansi-cyan-bg { background-color: var(--ansi-cyan); }
+.ansi-white-bg { background-color: var(--ansi-white); }
+.ansi-bright-black-bg { background-color: var(--ansi-bright-black); }
+.ansi-bright-red-bg { background-color: var(--ansi-bright-red); }
+.ansi-bright-green-bg { background-color: var(--ansi-bright-green); }
+.ansi-bright-yellow-bg { background-color: var(--ansi-bright-yellow); }
+.ansi-bright-blue-bg { background-color: var(--ansi-bright-blue); }
+.ansi-bright-magenta-bg { background-color: var(--ansi-bright-magenta); }
+.ansi-bright-cyan-bg { background-color: var(--ansi-bright-cyan); }
+.ansi-bright-white-bg { background-color: var(--ansi-bright-white); }
+
+.ansi-bold { font-weight: 600; }
+.ansi-dim { opacity: 0.6; }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+
+/* ── Streamdown (AI markdown) → iOS skin bridge ───────────────────────────
+   Streamdown renders plain markdown elements; we re-skin them onto the Pi
+   token system. Shiki owns code-token colors (inline styles), so we only
+   swap the block surface + structural colors here.                      */
+.sd-bridge {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.sd-bridge > :first-child { margin-top: 0; }
+.sd-bridge > :last-child { margin-bottom: 0; }
+
+.sd-bridge h1,
+.sd-bridge h2,
+.sd-bridge h3 {
+  color: var(--text-primary);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 14px 0 6px;
+}
+.sd-bridge h1 { font-size: 1.25em; }
+.sd-bridge h2 { font-size: 1.12em; }
+.sd-bridge h3 { font-size: 1.02em; }
+
+.sd-bridge a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sd-bridge blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--accent-muted);
+  color: var(--text-secondary);
+}
+
+.sd-bridge ul,
+.sd-bridge ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.sd-bridge li { margin: 2px 0; }
+
+.sd-bridge :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-sunken);
+  color: var(--text-primary);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.sd-bridge pre {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--separator);
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: var(--bg-sunken) !important;
+}
+.sd-bridge pre code {
+  background: transparent !important;
+}
+
+.sd-bridge table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12.5px;
+  width: 100%;
+}
+.sd-bridge th,
+.sd-bridge td {
+  border: 1px solid var(--separator);
+  padding: 5px 9px;
+  text-align: left;
+}
+.sd-bridge th { background: var(--bg-sunken); font-weight: 600; }
+
+.sd-bridge img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--separator);
+}
+
+.sd-bridge hr {
+  border: none;
+  border-top: 1px solid var(--separator);
+  margin: 12px 0;
+}
+
+/* ── Work mode: chat is centered in a comfortable reading column ── */
+.sd-work {
+  height: 100%;
+  min-width: 0;
+  flex: 1;
+  max-width: 840px;
+  margin-left: auto;
+  margin-right: auto;
+}
+/* AgentPanel's <aside> hardcodes width:320 — force it to fill its flex container
+   in work mode so the chat actually spans the reading column. */
+.sd-work > aside {
+  width: 100% !important;
+  max-width: none !important;
+  border-left: none !important;
+  border-radius: 0 !important;
+}
+
+/* ── Zen-mode brand title ────────────────────────────────────────────────── */
+.zen-title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 42px;
+  letter-spacing: 0.12em;
+  color: var(--text-primary);
+  opacity: 0.55;
+  position: fixed;
+  top: 33vh;
+  left: 50%;
+  translate: -50% -50%;
+  z-index: 39;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.7s ease;
+}
+.zen-title.is-working {
+  opacity: 0.12;
+}
+
+/* ── Desktop pet speech bubble ────────────────────────────────────────────
+   Paper, ink and seal for [PetBubble.tsx](../components/PetBubble.tsx). The
+   geometry (corners, tail, spring) lives in the component; everything here is
+   material. Nothing takes pointer events — the whole pet window is one drag
+   handle, so clicks must fall through to the container underneath. */
+.pet-bubble {
+  position: relative;
+  display: inline-block;
+  /* room for the tail, which is drawn outside the text box */
+  margin-bottom: 11px;
+  transform-origin: bottom center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.pet-bubble__paper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* the bleed and the feathered edge both spill past the viewport */
+  overflow: visible;
+}
+
+.pet-bubble__cast {
+  fill: #000;
+  opacity: 0.14;
+  filter: blur(4.5px);
+  transform: translateY(3px);
+}
+
+.pet-bubble__bleed {
+  fill: var(--pet-ink);
+  opacity: 0.12;
+  filter: blur(2.6px);
+  transform: translateY(1.5px);
+}
+
+.pet-bubble__grain {
+  opacity: 0.09;
+  mix-blend-mode: multiply;
+}
+
+/* the damp halo a brush leaves in the fibre around its own line — clipped to
+   the sheet, so it soaks inward instead of glowing around the bubble */
+.pet-bubble__halo {
+  fill: none;
+  stroke: var(--pet-ink);
+  stroke-opacity: 0.17;
+  stroke-width: 3.4;
+  filter: blur(1.8px);
+}
+
+/* brush pressure: 24% of the outline runs heavier than the rest */
+.pet-bubble__stress {
+  fill: none;
+  stroke: var(--pet-ink);
+  stroke-opacity: 0.22;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: 24 76;
+  stroke-dashoffset: -30;
+  filter: blur(0.6px);
+}
+
+.pet-bubble__line {
+  fill: none;
+  stroke: var(--pet-ink-line);
+  stroke-width: 1.15;
+  stroke-linejoin: round;
+}
+
+.pet-bubble__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  /* 留白 — the text never crowds the brush edge */
+  padding: 7px 14px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  font-family: var(--pet-bubble-font);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-align: center;
+  color: var(--pet-ink-text);
+}
+
+.pet-bubble__label {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* 落款印 — a stamped square, not a status LED */
+.pet-bubble__seal {
+  flex: none;
+  width: 7.5px;
+  height: 7.5px;
+  border-radius: 1.5px;
+  transform: rotate(-9deg);
+  opacity: 0.9;
+  box-shadow:
+    inset 0 0 0 0.75px rgba(255, 255, 255, 0.32),
+    0 0 0 0.5px rgba(38, 36, 33, 0.14);
+}
+
+/* while the agent is running the seal breathes, so activity stays legible even
+   when the text itself has not changed */
+@keyframes pet-seal-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: rotate(-9deg) scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: rotate(-9deg) scale(1);
+  }
+}
+
+.pet-bubble__seal.is-live {
+  animation: pet-seal-breathe 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-bubble__seal.is-live {
+    animation: none;
+  }
+}

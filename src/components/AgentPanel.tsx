@@ -1,0 +1,423 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { Virtuoso, type VirtuosoHandle, type Components } from "react-virtuoso";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@appica/ui-react/collapsible";
+import { Spinner } from "@appica/ui-react/spinner";
+import { useUI } from "@/lib/store";
+import { useChat, type ChatMessage, type DeliveryMode } from "@/lib/pi/chat";
+import { usePi } from "@/lib/pi/store";
+import { useSessions } from "@/lib/pi/sessions";
+import { useExtUi } from "@/lib/pi/ext-ui";
+import { useT } from "@/lib/i18n";
+import {
+  filterSlashCommands,
+  runBuiltinCommand,
+  type SlashItem,
+} from "@/lib/pi/commands";
+import { SubagentDeck } from "./Subagents";
+import { SlashCommandMenu } from "./SlashCommandMenu";
+import { MessageBubble } from "./MessageBubble";
+import { ActivityLine, PiSpark, ShimmerText } from "./ActivityLine";
+import { ComposerInput } from "./ComposerInput";
+import { RetryBanner } from "./RetryBanner";
+import { ExtStatusLine, ExtWidgets } from "./ExtensionSurfaces";
+import { IconButton, SectionLabel } from "./primitives";
+import {
+  Square,
+  ArrowUp,
+  ArrowDown,
+  ChevronRight,
+  History,
+  SquarePen,
+  X,
+} from "lucide-react";
+
+/** Main conversation surface for the real pi event stream. */
+export function AgentPanel() {
+  const { agentTasks, agentRunning } = useUI();
+  const { messages, streaming, send, steer, followUp, abort, queue } = useChat();
+  /** how ⌘⏎ delivers a message typed while a turn is already running */
+  const [delivery, setDelivery] = useState<DeliveryMode>("steer");
+  const retrying = useChat((s) => {
+    for (const st of s.activeRetries.values()) if (st.status === "loading") return true;
+    return false;
+  });
+  const piStatus = usePi((s) => s.status);
+  const piCommands = usePi((s) => s.commands);
+  const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<string[]>([]);
+  const [isAtTop, setIsAtTop] = useState(true);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // "Waiting for first token": streaming is on, but the AI hasn't produced any
+  // visible content yet (no assistant text/thinking/tools/error). This is the
+  // gap between sending and the first streamed character — show the Pi loader.
+  const waitingForFirstToken = streaming && (() => {
+    const last = messages[messages.length - 1];
+    if (!last) return true;
+    if (last.role === "user") return true;
+    return !last.text && !last.thinking && last.tools.length === 0 && !last.isError;
+  })();
+  const t = useT();
+
+  /* an extension pushed text into the editor (set_editor_text) — pi treats this
+     as replacing the draft, so mirror that and consume it so it applies once. */
+  const extEditorText = useExtUi((s) => s.editorText);
+  useEffect(() => {
+    if (extEditorText === null) return;
+    setDraft(extEditorText);
+    useExtUi.getState().clearEditorText();
+  }, [extEditorText]);
+
+  /** clipboard paste — lift image blobs into data-URL attachments */
+  const onComposerPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files: File[] = [];
+    for (const item of e.clipboardData.items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length === 0) return; // plain text paste — default behavior
+    e.preventDefault();
+    for (const f of files) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          const url = reader.result;
+          setAttachments((prev) => [...prev, url]);
+        }
+      };
+      reader.readAsDataURL(f);
+    }
+  };
+
+  /* slash-command menu — open while the draft is "/<partial-name>" */
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const slashQuery =
+    !slashDismissed && draft.startsWith("/") && !draft.includes(" ")
+      ? draft.slice(1)
+      : null;
+  const slashItems = useMemo(
+    () =>
+      slashQuery !== null
+        ? filterSlashCommands(slashQuery, piCommands, t)
+        : [],
+    [slashQuery, piCommands, t]
+  );
+  const slashOpen = slashItems.length > 0;
+
+  useEffect(() => setSlashIndex(0), [slashQuery]);
+
+  /** click / ⏎ on a menu row — auto-fill the composer with the command */
+  const pickSlash = (item: SlashItem) => {
+    setDraft(`/${item.name} `);
+  };
+
+  /** Keyboard shortcut: Cmd+Shift+C / Ctrl+Shift+C to copy the last assistant message */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'C') {
+        e.preventDefault();
+        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.text);
+        if (lastAssistant?.text) {
+          navigator.clipboard.writeText(lastAssistant.text).catch(console.error);
+        }
+      }
+    };
+    const container = containerRef.current;
+    if (container) {
+      container.addEventListener('keydown', handleKeyDown);
+      return () => container.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [messages]);
+
+  /* No auto-send-on-idle effect here on purpose: messages typed during a run go
+     straight to pi as `steer`/`follow_up`, and pi executes them itself. Re-sending
+     them locally when `streaming` flipped false is what used to double-send. */
+
+  const submit = (alt = false) => {
+    const text = draft.trim();
+    const images = attachments;
+    if (!text && images.length === 0) return;
+    setDraft("");
+    setAttachments([]);
+    if (runBuiltinCommand(text)) return; // built-ins act locally
+
+    // A turn is already in flight: hand the message to pi rather than sending a
+    // second `prompt`. `steer` cuts into the running turn, `followUp` waits for
+    // it — ⌘⇧⏎ (`alt`) picks whichever the toggle is not set to.
+    if (streaming) {
+      const mode: DeliveryMode = alt
+        ? delivery === "steer"
+          ? "followUp"
+          : "steer"
+        : delivery;
+      void (mode === "steer" ? steer(text, images) : followUp(text, images));
+      return;
+    }
+
+    send(text, images); // extension commands & plain prompts go to pi
+  };
+
+  const onComposerKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashIndex((i) => (i + 1) % slashItems.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIndex((i) => (i - 1 + slashItems.length) % slashItems.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        pickSlash(slashItems[slashIndex] ?? slashItems[0]);
+        return;
+      }
+      if (e.key === "Escape") {
+        setSlashDismissed(true);
+        return;
+      }
+    }
+    // Note: Cmd+Enter is handled in ComposerInput component
+  };
+
+  const busy = streaming || agentRunning || retrying;
+  const canScroll = !(isAtTop && isAtBottom);
+  const scrollToEdge = () => {
+    virtuosoRef.current?.scrollTo({
+      top: isAtBottom ? 0 : Number.MAX_SAFE_INTEGER,
+      behavior: "smooth",
+    });
+  };
+
+  return (
+    <aside
+      ref={containerRef}
+      className="material"
+      tabIndex={-1}
+      style={{
+        width: "100%",
+        minWidth: 0,
+        flex: 1,
+        minHeight: 0,
+        borderLeft: "1px solid var(--separator)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        outline: "none",
+      }}
+    >
+      {/* header — status + session history / new-session entry points */}
+      <div style={{ display: "flex", alignItems: "center", paddingRight: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <SectionLabel>
+            {busy
+              ? t("agent.working")
+              : t("agent.statusLine", { status: t(`status.${piStatus}`) })}
+          </SectionLabel>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", paddingTop: 8 }}>
+          <IconButton
+            label={t("agent.history")}
+            onClick={() => {
+              // history lives in the sidebar sessions list — make sure it shows
+              if (!useUI.getState().sidebarOpen) useUI.getState().toggleSidebar();
+            }}
+          >
+            <History size={14} />
+          </IconButton>
+          <IconButton
+            label={t("agent.newSession")}
+            onClick={() => useSessions.getState().newSession()}
+          >
+            <SquarePen size={14} />
+          </IconButton>
+        </div>
+      </div>
+
+      {/* extension setStatus lines — live status pushed by pi extensions */}
+      <ExtStatusLine />
+
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <Virtuoso<ChatMessage>
+          ref={virtuosoRef}
+          data={messages}
+          atTopStateChange={setIsAtTop}
+          atBottomStateChange={setIsAtBottom}
+          // streaming? follow new content smoothly only while at the bottom —
+          // scrolling up to read history is never interrupted.
+          followOutput={(atBottom) => (streaming && atBottom ? "smooth" : false)}
+          // buffer items above/below the viewport so fast scrolls stay filled.
+          increaseViewportBy={{ top: 600, bottom: 600 }}
+          computeItemKey={(_index, m) => m.id}
+          className="material"
+          style={{ height: "100%" }}
+          components={
+            {
+              // Top of the scroll area (does NOT stick) — subagents, live task
+              // strip, and the empty-state hint when there are no messages.
+              Header: () => (
+              <div style={{ padding: "4px 12px 0" }}>
+                {/* subagent deck — parallel workers, tap a card for detail */}
+                <SubagentDeck />
+
+                {/* task strip — live pi tool activity (agent-bridge) or the local showcase */}
+                {agentRunning &&
+                  agentTasks.map((task, i) => (
+                    <ActivityLine
+                      key={task.id}
+                      status={task.status}
+                      toolName={task.tool}
+                      title={task.title}
+                      detail={task.detail}
+                      delay={i * 0.04}
+                    />
+                  ))}
+
+                {/* conversation stream — empty state */}
+                {messages.length === 0 && !agentRunning && (
+                  <div
+                    style={{
+                      fontSize: 12.5,
+                      color: "var(--text-tertiary)",
+                      padding: "12px 6px",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {t("agent.emptyHint")}
+                  </div>
+                )}
+              </div>
+            ),
+              // Bottom of the scroll area — one compact line while the turn has
+              // produced nothing visible yet, so it reads as the first row of the
+              // activity list rather than a loading panel.
+              Footer: () => (
+              <div style={{ padding: "0 12px 6px" }}>
+                <AnimatePresence>
+                  {waitingForFirstToken && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -3 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        padding: "4px 2px",
+                      }}
+                    >
+                      <PiSpark size={13} />
+                      <ShimmerText style={{ fontSize: 12, lineHeight: 1.45 }}>
+                        {t("agent.loading")}
+                      </ShimmerText>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ),
+            } satisfies Components<ChatMessage>
+          }
+          itemContent={(index, m) => (
+            // Only the latest message plays the entrance animation — historical
+            // messages use initial={false} so virtualized re-mounts on scroll
+            // don't replay the fade-in.
+            <div style={{ padding: "0 12px" }}>
+              <MessageBubble
+                key={m.id}
+                m={m}
+                animateIn={index === messages.length - 1}
+              />
+            </div>
+          )}
+        />
+
+        {messages.length > 0 && canScroll && (
+          <div
+            style={{
+              position: "absolute",
+              right: 14,
+              bottom: 12,
+              zIndex: 2,
+              border: "1px solid var(--separator)",
+              borderRadius: 8,
+              background: "var(--material-thick)",
+              boxShadow: "var(--shadow-md)",
+            }}
+          >
+            <IconButton
+              label={t(isAtBottom ? "agent.scrollTop" : "agent.scrollBottom")}
+              onClick={scrollToEdge}
+            >
+              {isAtBottom ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+            </IconButton>
+          </div>
+        )}
+      </div>
+
+      {/* composer */}
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          minWidth: 0,
+          flexShrink: 0,
+          boxSizing: "border-box",
+          background: "var(--bg-base)",
+        }}
+      >
+        {/* "/" surfaces built-in + extension commands; a click fills the input */}
+        <SlashCommandMenu
+          open={slashOpen}
+          items={slashItems}
+          activeIndex={slashIndex}
+          onHover={setSlashIndex}
+          onSelect={pickSlash}
+        />
+        {/* inline retry status — lives in the panel, not a bottom-fixed toast */}
+        <div style={{ padding: "0 12px" }}>
+          <RetryBanner />
+          {/* extension widgets pinned above the editor */}
+          <ExtWidgets placement="aboveEditor" />
+        </div>
+        <ComposerInput
+          draft={draft}
+          setDraft={(value) => {
+            setDraft(value);
+            setSlashDismissed(false); // typing re-opens an escaped menu
+          }}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          streaming={streaming}
+          retrying={retrying}
+          busy={busy}
+          onSubmit={submit}
+          onAbort={abort}
+          onKeyDown={onComposerKeyDown}
+          onPaste={onComposerPaste}
+          queue={queue}
+          delivery={delivery}
+          onDeliveryChange={setDelivery}
+        />
+        {/* extension widgets pinned below the editor */}
+        <div style={{ padding: "0 12px 8px" }}>
+          <ExtWidgets placement="belowEditor" />
+        </div>
+      </div>
+    </aside>
+  );
+}

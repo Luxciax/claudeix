@@ -1,0 +1,37 @@
+[package]
+name = "pi-desktop"
+version = "0.5.1"
+description = "Pi Coding Agent — iOS-inspired desktop client"
+authors = ["Pi"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "pi_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "tray-icon", "image"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+base64 = "0.22"
+# model-list fetch (rustls-tls avoids system OpenSSL on Linux builds)
+# pinned to a 1.71-compatible patch so it still builds on the 1.77.x toolchain
+# `tokio` is not a reqwest feature (it is always a dependency since 0.12), so it
+# must not be listed here or resolution fails on newer cargo.
+reqwest = { version = "=0.12.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
