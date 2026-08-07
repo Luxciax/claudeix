@@ -109,6 +109,11 @@ export type TranscriptRestoreResult = {
   restoredSnapshotId: string;
 };
 
+export type SessionRenameResult = {
+  detail: SessionDetail;
+  snapshot: BackupSnapshot;
+};
+
 export type TranscriptAuditEntry = {
   id: number;
   transactionId: string;

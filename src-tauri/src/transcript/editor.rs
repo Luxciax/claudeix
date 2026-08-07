@@ -10,7 +10,9 @@ use crate::models::edit::{
     TranscriptAuditEntry, TranscriptEditRequest, TranscriptEditResult, TranscriptRestoreRequest,
     TranscriptRestoreResult,
 };
-use crate::models::session::{SessionDetail, SessionIdentity};
+use crate::models::session::{
+    SessionDetail, SessionIdentity, SessionRenameRequest, SessionRenameResult,
+};
 use crate::models::transcript::EditTarget;
 use crate::trash::service::TrashService;
 use crate::transcript::audit::{self, EditTransactionRecord};
@@ -497,6 +499,189 @@ fn new_transaction_record(
         created_at: timestamp,
         updated_at: timestamp,
         error: None,
+    }
+}
+
+fn apply_rename(
+    identity: &SessionIdentity,
+    request: &SessionRenameRequest,
+    backup_root: &Path,
+    database_path: &Path,
+) -> Result<SessionRenameResult, String> {
+    let title = request.title.trim();
+    if title.is_empty() {
+        return Err("session title must be non-empty".to_string());
+    }
+    if !source_is_inside_projects(identity) {
+        return Err("session source path is outside the Claude projects directory".to_string());
+    }
+    let current = validate_detail(identity)?;
+    if current.file_fingerprint != request.expected_file_fingerprint {
+        return Err("session changed on disk; reload it before renaming".to_string());
+    }
+    let source_bytes = fs::read(&identity.source_path).map_err(|error| {
+        format!(
+            "cannot read Claude transcript {}: {error}",
+            identity.source_path.display()
+        )
+    })?;
+    if source_bytes.is_empty() {
+        return Err("cannot rename an empty Claude transcript".to_string());
+    }
+    if !source_bytes.ends_with(b"\n") {
+        return Err("Claude transcript does not end with a newline; repair it before renaming".to_string());
+    }
+    let record = serde_json::json!({
+        "type": "custom-title",
+        "customTitle": title,
+        "sessionId": identity.session_id,
+    });
+    let mut appended = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
+    appended.push(b'\n');
+    let mut expected_after = source_bytes.clone();
+    expected_after.extend_from_slice(&appended);
+    let mut transaction = new_transaction_record(
+        identity,
+        "rename",
+        sha256(&source_bytes),
+        sha256(&expected_after),
+        None,
+        Some(current.summary.title.clone()),
+        Some(title.to_string()),
+    );
+    audit::begin(database_path, &transaction)?;
+
+    let mut rollback_snapshot: Option<BackupSnapshot> = None;
+    let mut source_touched = false;
+    let result = (|| -> Result<SessionRenameResult, String> {
+        let snapshot = create_snapshot(
+            backup_root,
+            identity,
+            &source_bytes,
+            "before_rename",
+            None,
+            Some(sha256(current.summary.title.as_bytes())),
+            Some(sha256(title.as_bytes())),
+        )?;
+        rollback_snapshot = Some(snapshot.clone());
+        transaction.backup_path = Some(snapshot.backup_path.clone());
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "backed_up",
+            Some(&snapshot.backup_path),
+            transaction.updated_at,
+            None,
+        )?;
+
+        let recheck = validate_detail(identity)?;
+        if recheck.file_fingerprint != request.expected_file_fingerprint {
+            return Err(
+                "session changed while rename was being prepared; title was not appended"
+                    .to_string(),
+            );
+        }
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&identity.source_path)
+            .map_err(|error| format!("cannot open Claude transcript for rename: {error}"))?;
+        source_touched = true;
+        file.write_all(&appended)
+            .and_then(|_| file.flush())
+            .and_then(|_| file.sync_all())
+            .map_err(|error| format!("cannot append Claude custom-title record: {error}"))?;
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "replaced",
+            None,
+            transaction.updated_at,
+            None,
+        )?;
+
+        let detail = validate_detail(identity)?;
+        if detail.summary.title != title {
+            return Err("Claude transcript did not resolve to the requested custom title".to_string());
+        }
+        let actual_after = fs::read(&identity.source_path)
+            .map_err(|error| format!("cannot verify renamed Claude transcript: {error}"))?;
+        if sha256(&actual_after) != transaction.source_hash_after {
+            return Err("renamed Claude transcript hash does not match the prepared append".to_string());
+        }
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "verified",
+            None,
+            transaction.updated_at,
+            None,
+        )?;
+        audit::commit(database_path, &transaction, &snapshot.backup_path)?;
+        Ok(SessionRenameResult { detail, snapshot })
+    })();
+
+    match result {
+        Ok(result) => Ok(result),
+        Err(error) if source_touched => {
+            let Some(snapshot) = rollback_snapshot.as_ref() else {
+                let _ = audit::update_status(
+                    database_path,
+                    &transaction.id,
+                    "replaced",
+                    None,
+                    now_millis(),
+                    Some(&error),
+                );
+                return Err(format!(
+                    "rename failed after touching the transcript and no rollback snapshot is available: {error}"
+                ));
+            };
+            match rollback_to_snapshot(identity, snapshot) {
+                Ok(_) => {
+                    let _ = audit::update_status(
+                        database_path,
+                        &transaction.id,
+                        "rolled_back",
+                        Some(&snapshot.backup_path),
+                        now_millis(),
+                        Some(&error),
+                    );
+                    Err(format!(
+                        "rename failed, but Claudeix restored the original transcript: {error}"
+                    ))
+                }
+                Err(rollback_error) => {
+                    let combined = format!(
+                        "rename failed after touching the transcript: {error}; automatic rollback also failed: {rollback_error}"
+                    );
+                    let _ = audit::update_status(
+                        database_path,
+                        &transaction.id,
+                        "replaced",
+                        Some(&snapshot.backup_path),
+                        now_millis(),
+                        Some(&combined),
+                    );
+                    Err(combined)
+                }
+            }
+        }
+        Err(error) => {
+            let _ = audit::update_status(
+                database_path,
+                &transaction.id,
+                "rolled_back",
+                rollback_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.backup_path.as_str()),
+                now_millis(),
+                Some(&error),
+            );
+            Err(error)
+        }
     }
 }
 
@@ -1098,6 +1283,37 @@ pub fn transcript_edit(
 }
 
 #[tauri::command]
+pub fn session_rename(
+    editor: State<'_, TranscriptEditor>,
+    runtime: State<'_, RuntimeRegistry>,
+    trash: State<'_, TrashService>,
+    catalog: State<'_, SessionCatalog>,
+    request: SessionRenameRequest,
+) -> Result<SessionRenameResult, String> {
+    if trash.is_locked(&request.session_key) {
+        return Err("this Claude session is currently being moved to the recycle bin".to_string());
+    }
+    let _lease = editor.acquire(&request.session_key)?;
+    if trash.is_locked(&request.session_key) {
+        return Err("this Claude session started a recycle-bin transaction while rename was being prepared".to_string());
+    }
+    let identity = identity_from_catalog(&catalog, &request.session_key)?;
+    if session_has_pending_recovery(&identity)? {
+        return Err(
+            "this Claude session has an unfinished edit/restore transaction; resolve recovery first"
+                .to_string(),
+        );
+    }
+    ensure_editable_runtime_state(&runtime, &identity, &request.session_key)?;
+    apply_rename(
+        &identity,
+        &request,
+        &claudeix_backups_dir()?,
+        &claudeix_database_path()?,
+    )
+}
+
+#[tauri::command]
 pub fn transcript_snapshots_list(
     catalog: State<'_, SessionCatalog>,
     session_key: String,
@@ -1295,6 +1511,74 @@ mod tests {
         let source = fs::read_to_string(&identity.source_path).unwrap();
         assert!(source.contains("edited reply"));
         assert!(source.contains("\"uuid\":\"assistant-1\""));
+    }
+
+    #[test]
+    fn rename_appends_native_custom_title_and_preserves_existing_bytes() {
+        let (root, identity, request) = fixture();
+        let before = fs::read(&identity.source_path).unwrap();
+        let detail = load_session(&identity).unwrap();
+        let rename = SessionRenameRequest {
+            session_key: identity.key(),
+            expected_file_fingerprint: detail.file_fingerprint,
+            title: "  Native title  ".to_string(),
+        };
+        let database = root.join("claudeix.db");
+        let result = apply_rename(&identity, &rename, &root.join("backups"), &database).unwrap();
+        assert_eq!(result.detail.summary.title, "Native title");
+        let after = fs::read(&identity.source_path).unwrap();
+        assert!(after.starts_with(&before));
+        let appended = std::str::from_utf8(&after[before.len()..]).unwrap();
+        let value: Value = serde_json::from_str(appended.trim_end()).unwrap();
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("custom-title"));
+        assert_eq!(value.get("customTitle").and_then(Value::as_str), Some("Native title"));
+        assert_eq!(value.get("sessionId").and_then(Value::as_str), Some("session-1"));
+        let audit = audit::audit_for_session(
+            &database,
+            &identity.session_id,
+            &display_path(&identity.source_path),
+        )
+        .unwrap();
+        assert_eq!(audit[0].operation, "rename");
+        assert_eq!(audit[0].new_content.as_deref(), Some("Native title"));
+        assert_eq!(result.snapshot.reason, "before_rename");
+        let _ = request;
+    }
+
+    #[test]
+    fn blank_or_stale_rename_never_touches_source() {
+        let (root, identity, _request) = fixture();
+        let before = fs::read(&identity.source_path).unwrap();
+        let detail = load_session(&identity).unwrap();
+        let blank = SessionRenameRequest {
+            session_key: identity.key(),
+            expected_file_fingerprint: detail.file_fingerprint.clone(),
+            title: "   ".to_string(),
+        };
+        assert!(apply_rename(
+            &identity,
+            &blank,
+            &root.join("backups"),
+            &root.join("claudeix.db")
+        )
+        .unwrap_err()
+        .contains("non-empty"));
+        assert_eq!(fs::read(&identity.source_path).unwrap(), before);
+
+        let stale = SessionRenameRequest {
+            session_key: identity.key(),
+            expected_file_fingerprint: "stale".to_string(),
+            title: "new title".to_string(),
+        };
+        assert!(apply_rename(
+            &identity,
+            &stale,
+            &root.join("backups"),
+            &root.join("claudeix.db")
+        )
+        .unwrap_err()
+        .contains("changed on disk"));
+        assert_eq!(fs::read(&identity.source_path).unwrap(), before);
     }
 
     fn simulate_crash_after_replace(

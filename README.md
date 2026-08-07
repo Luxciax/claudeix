@@ -53,6 +53,8 @@ Claudeix 是一个面向 Claude Code 的轻量 Windows 桌面客户端。
 - 回收站支持 SHA-256 校验、安全原路径恢复和不同内容的交换恢复；
 - 交换恢复会先把当前冲突版本保存成新的回收站条目，两份内容均保留；
 - 回收站默认不自动清理；永久删除必须先预览完整路径，再输入指定确认短语；
+- 支持 Claude Code 原生会话重命名：按 `/rename` 的 `custom-title` JSONL 记录格式追加，并纳入完整快照、审计与崩溃恢复；
+- 支持 Claudeix 独立归档：归档状态存入 `claudeix.db`，不会向 Claude 原始 JSONL 写入自定义字段；
 - 运行层已脱离 Pi / WSL / Pet：这些旧源码暂时保留在仓库中，但不再参与 Rust 模块编译、Tauri 命令注册或启动流程；
 - 工作区状态写入 `~/.claudeix/desktop.json`，首次可兼容读取旧 `~/.pi/agent/desktop.json`，不会修改或删除旧状态文件；
 - 前端构建不再运行宠物 manifest 生成脚本；
@@ -60,7 +62,6 @@ Claudeix 是一个面向 Claude Code 的轻量 Windows 桌面客户端。
 
 尚未完成：
 
-- 会话重命名与归档；
 - Git worktree 并行会话；
 - 自动更新签名。
 

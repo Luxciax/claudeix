@@ -106,7 +106,11 @@ export function SnapshotPanel({
                   }}
                 >
                   <summary style={{ cursor: "pointer", fontSize: 11 }}>
-                    {entry.operation === "snapshot_restore" ? "完整快照恢复" : "消息编辑"}
+                    {entry.operation === "snapshot_restore"
+                      ? "完整快照恢复"
+                      : entry.operation === "rename"
+                        ? "会话重命名"
+                        : "消息编辑"}
                     {entry.lineIndex != null ? ` · JSONL 第 ${entry.lineIndex + 1} 行` : ""}
                     <span style={{ marginLeft: 7, color: "var(--text-secondary)" }}>
                       {formatTime(entry.createdAt)}
@@ -169,7 +173,11 @@ export function SnapshotPanel({
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <strong style={{ fontSize: 12 }}>
-                    {snapshot.reason === "before_restore" ? "恢复操作前" : "编辑操作前"}
+                    {snapshot.reason === "before_restore"
+                      ? "恢复操作前"
+                      : snapshot.reason === "before_rename"
+                        ? "重命名前"
+                        : "编辑操作前"}
                   </strong>
                   <span
                     style={{

@@ -8,6 +8,7 @@ import type {
   EditRecoveryResolveResult,
   EditTarget,
   SessionDetail,
+  SessionRenameResult,
   SessionSummary,
   TranscriptAuditEntry,
   TranscriptEditResult,
@@ -38,6 +39,13 @@ export const api = {
     invoke<SessionDetail>("session_get", { sessionKey }),
   refreshSession: (sessionKey: string) =>
     invoke<SessionDetail>("session_refresh", { sessionKey }),
+  renameSession: (request: {
+    sessionKey: string;
+    expectedFileFingerprint: string;
+    title: string;
+  }) => invoke<SessionRenameResult>("session_rename", { request }),
+  setSessionArchived: (request: { sessionKey: string; archived: boolean }) =>
+    invoke<SessionDetail>("session_set_archived", { request }),
   editTranscript: (request: {
     sessionKey: string;
     target: EditTarget;

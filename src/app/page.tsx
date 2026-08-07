@@ -1,12 +1,25 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, History, Play, Plus, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  FolderOpen,
+  History,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Square,
+  Terminal,
+  Trash2,
+} from "lucide-react";
 
 import { RuntimeTimeline } from "@/features/runtime/RuntimeTimeline";
 import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import type { ExternalRuntimeInfo } from "@/features/runtime/types";
 import { useSessionStore } from "@/features/sessions/session-store";
+import { RenameSessionDialog } from "@/features/sessions/RenameSessionDialog";
 import type {
   BackupSnapshot,
   ClaudeStatus,
@@ -34,6 +47,9 @@ export default function Home() {
   const [checkingExternal, setCheckingExternal] = useState(false);
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showRename, setShowRename] = useState(false);
+  const [sessionActionMutating, setSessionActionMutating] = useState(false);
   const [deletePreview, setDeletePreview] = useState<TrashDeletePreview | null>(null);
   const [trashMutating, setTrashMutating] = useState(false);
   const [advancedAssistantEditing, setAdvancedAssistantEditing] = useState(false);
@@ -99,9 +115,19 @@ export default function Home() {
     [sessions, activeKey],
   );
   const activeTitle = detail?.summary.title ?? activeSummary?.title ?? "新会话";
+  const activeArchived = detail?.summary.archived ?? activeSummary?.archived ?? false;
+  const regularSessions = useMemo(
+    () => sessions.filter((session) => !session.archived),
+    [sessions],
+  );
+  const archivedSessions = useMemo(
+    () => sessions.filter((session) => session.archived),
+    [sessions],
+  );
 
   const selectSession = async (sessionKey: string) => {
     if (running) return;
+    setShowRename(false);
     setActiveKey(sessionKey);
     resetRuntime();
     await Promise.all([
@@ -113,6 +139,7 @@ export default function Home() {
 
   const newSession = () => {
     if (running) return;
+    setShowRename(false);
     setActiveKey(null);
     clearTranscript();
     resetRuntime();
@@ -335,6 +362,47 @@ export default function Home() {
     }
   };
 
+  const renameActiveSession = async (title: string) => {
+    if (!activeKey || !detail || running || transcriptMutating || externalRuntime?.active) return;
+    setSessionActionMutating(true);
+    try {
+      await api.renameSession({
+        sessionKey: activeKey,
+        expectedFileFingerprint: detail.fileFingerprint,
+        title,
+      });
+      await Promise.all([
+        useTranscriptStore.getState().refresh(activeKey),
+        useTranscriptStore.getState().loadSnapshots(activeKey),
+        useTranscriptStore.getState().loadAudit(activeKey),
+      ]);
+      if (workspace) await scanSessions(workspace, true);
+      setShowRename(false);
+    } catch (error) {
+      window.alert(`重命名失败：${String(error)}`);
+    } finally {
+      setSessionActionMutating(false);
+    }
+  };
+
+  const setActiveSessionArchived = async (archived: boolean) => {
+    if (!activeKey || running || transcriptMutating || sessionActionMutating) return;
+    setSessionActionMutating(true);
+    try {
+      await api.setSessionArchived({ sessionKey: activeKey, archived });
+      if (workspace) await scanSessions(workspace, true);
+      setShowArchived(archived);
+      setActiveKey(null);
+      clearTranscript();
+      resetRuntime();
+      setShowSnapshots(false);
+    } catch (error) {
+      window.alert(`${archived ? "归档" : "取消归档"}失败：${String(error)}`);
+    } finally {
+      setSessionActionMutating(false);
+    }
+  };
+
   return (
     <main
       style={{
@@ -447,7 +515,7 @@ export default function Home() {
             padding: "0 8px",
           }}
         >
-          历史会话 {sessionLoading ? "· 扫描中" : `· ${sessions.length}`}
+          历史会话 {sessionLoading ? "· 扫描中" : `· ${regularSessions.length}`}
         </div>
         {sessionError && (
           <div style={{ margin: "8px", fontSize: 11, color: "var(--danger)" }}>
@@ -455,7 +523,7 @@ export default function Home() {
           </div>
         )}
         <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
-          {sessions.map((session) => (
+          {regularSessions.map((session) => (
             <button
               key={session.key}
               onClick={() => void selectSession(session.key)}
@@ -496,6 +564,74 @@ export default function Home() {
             </button>
           ))}
         </div>
+
+        {archivedSessions.length > 0 && (
+          <>
+            <button
+              onClick={() => setShowArchived((current) => !current)}
+              disabled={running}
+              style={{
+                marginTop: 14,
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "7px 9px",
+                border: "none",
+                borderRadius: 8,
+                background: showArchived ? "var(--bg-selected)" : "transparent",
+                color: "var(--text-secondary)",
+                fontSize: 11,
+              }}
+            >
+              <Archive size={13} /> 归档会话 · {archivedSessions.length}
+            </button>
+            {showArchived && (
+              <div style={{ marginTop: 4, display: "grid", gap: 4 }}>
+                {archivedSessions.map((session) => (
+                  <button
+                    key={session.key}
+                    onClick={() => void selectSession(session.key)}
+                    disabled={running}
+                    style={{
+                      textAlign: "left",
+                      border: "none",
+                      borderRadius: 10,
+                      padding: "9px 11px",
+                      background:
+                        activeKey === session.key ? "var(--bg-selected)" : "transparent",
+                      color: "var(--text-primary)",
+                      opacity: 0.78,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 12,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {session.title}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 3,
+                        fontSize: 10,
+                        color: "var(--text-secondary)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {session.preview || `${session.messageCount} 条记录`}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </aside>
 
       <section
@@ -540,6 +676,49 @@ export default function Home() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {activeKey && (
+              <button
+                onClick={() => setShowRename(true)}
+                disabled={
+                  running ||
+                  transcriptMutating ||
+                  sessionActionMutating ||
+                  Boolean(externalRuntime?.active)
+                }
+                title="使用 Claude Code 原生 custom-title 重命名此会话"
+                style={{
+                  width: 32,
+                  height: 32,
+                  display: "grid",
+                  placeItems: "center",
+                  border: "1px solid var(--separator)",
+                  borderRadius: 8,
+                  background: "var(--bg-elevated)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                <Pencil size={14} />
+              </button>
+            )}
+            {activeKey && (
+              <button
+                onClick={() => void setActiveSessionArchived(!activeArchived)}
+                disabled={running || transcriptMutating || sessionActionMutating}
+                title={activeArchived ? "取消归档" : "归档到 Claudeix 归档区"}
+                style={{
+                  width: 32,
+                  height: 32,
+                  display: "grid",
+                  placeItems: "center",
+                  border: "1px solid var(--separator)",
+                  borderRadius: 8,
+                  background: "var(--bg-elevated)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                {activeArchived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+              </button>
+            )}
             {activeKey && (
               <label
                 title="允许修改 Claude 可见文本；thinking、签名与工具记录仍不可编辑"
@@ -819,6 +998,14 @@ export default function Home() {
           mutating={trashMutating}
           onCancel={() => setDeletePreview(null)}
           onConfirm={() => void confirmSessionDelete()}
+        />
+      )}
+      {showRename && activeKey && (
+        <RenameSessionDialog
+          currentTitle={activeTitle}
+          mutating={sessionActionMutating}
+          onCancel={() => setShowRename(false)}
+          onConfirm={(title) => void renameActiveSession(title)}
         />
       )}
       {(recoveryItems.length > 0 || recoveryError) && (

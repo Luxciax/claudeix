@@ -1,4 +1,5 @@
 use crate::models::edit::TranscriptAuditEntry;
+use crate::models::session::SessionSummary;
 use crate::models::transcript::EditTarget;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -73,6 +74,75 @@ fn open(path: &Path) -> Result<Connection, String> {
         )
         .map_err(|error| format!("cannot initialize Claudeix audit database: {error}"))?;
     Ok(connection)
+}
+
+fn ensure_session_metadata_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_metadata(
+               session_id TEXT NOT NULL,
+               source_path TEXT NOT NULL,
+               archived INTEGER NOT NULL DEFAULT 0,
+               favorite INTEGER NOT NULL DEFAULT 0,
+               updated_at INTEGER NOT NULL,
+               PRIMARY KEY(session_id, source_path)
+             );",
+        )
+        .map_err(|error| format!("cannot initialize Claudeix session metadata: {error}"))
+}
+
+pub fn apply_session_metadata(path: &Path, summaries: &mut [SessionSummary]) -> Result<(), String> {
+    let connection = open(path)?;
+    ensure_session_metadata_schema(&connection)?;
+    let mut statement = connection
+        .prepare("SELECT session_id, source_path, archived, favorite FROM session_metadata")
+        .map_err(|error| format!("cannot query Claudeix session metadata: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? != 0,
+                row.get::<_, i64>(3)? != 0,
+            ))
+        })
+        .map_err(|error| format!("cannot query Claudeix session metadata: {error}"))?;
+    let metadata = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot decode Claudeix session metadata: {error}"))?;
+    for summary in summaries {
+        if let Some((_, _, archived, favorite)) = metadata
+            .iter()
+            .find(|(session_id, source_path, _, _)| {
+                session_id == &summary.session_id && source_path == &summary.source_path
+            })
+        {
+            summary.archived = *archived;
+            summary.favorite = *favorite;
+        }
+    }
+    Ok(())
+}
+
+pub fn set_session_archived(
+    path: &Path,
+    session_id: &str,
+    source_path: &str,
+    archived: bool,
+    updated_at: u64,
+) -> Result<(), String> {
+    let connection = open(path)?;
+    ensure_session_metadata_schema(&connection)?;
+    connection
+        .execute(
+            "INSERT INTO session_metadata(session_id, source_path, archived, favorite, updated_at)
+             VALUES (?1, ?2, ?3, 0, ?4)
+             ON CONFLICT(session_id, source_path)
+             DO UPDATE SET archived=excluded.archived, updated_at=excluded.updated_at",
+            params![session_id, source_path, archived as i64, updated_at as i64],
+        )
+        .map_err(|error| format!("cannot update Claudeix session archive state: {error}"))?;
+    Ok(())
 }
 
 fn target_json(target: &Option<EditTarget>) -> Result<Option<String>, String> {
@@ -326,5 +396,54 @@ mod tests {
         assert_eq!(audit.len(), 1);
         assert_eq!(audit[0].old_content.as_deref(), Some("old"));
         assert_eq!(get(&db, "tx-1").unwrap().unwrap().status, "committed");
+    }
+
+    #[test]
+    fn applies_archive_metadata_without_touching_native_session_fields() {
+        let root = std::env::temp_dir().join(format!(
+            "claudeix-metadata-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let db = root.join("claudeix.db");
+        let mut summary = SessionSummary {
+            key: "key".to_string(),
+            session_id: "session-1".to_string(),
+            title: "title".to_string(),
+            preview: "preview".to_string(),
+            workspace_root: "C:/work".to_string(),
+            source_path: "C:/sessions/session-1.jsonl".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            message_count: 1,
+            model: None,
+            archived: false,
+            favorite: false,
+            trashed: false,
+        };
+        set_session_archived(
+            &db,
+            &summary.session_id,
+            &summary.source_path,
+            true,
+            1,
+        )
+        .unwrap();
+        apply_session_metadata(&db, std::slice::from_mut(&mut summary)).unwrap();
+        assert!(summary.archived);
+        assert!(!summary.favorite);
+        set_session_archived(
+            &db,
+            &summary.session_id,
+            &summary.source_path,
+            false,
+            2,
+        )
+        .unwrap();
+        apply_session_metadata(&db, std::slice::from_mut(&mut summary)).unwrap();
+        assert!(!summary.archived);
     }
 }

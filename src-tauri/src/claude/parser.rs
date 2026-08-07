@@ -263,6 +263,8 @@ pub fn parse_session_file(
     let mut session_id = String::new();
     let mut workspace_root = None;
     let mut model = None;
+    let mut custom_title = None;
+    let mut ai_title = None;
     let mut file_hasher = Sha256::new();
 
     for (line_index, line) in BufReader::new(file).lines().enumerate() {
@@ -305,6 +307,22 @@ pub fn parse_session_file(
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
         }
+        if let Some(title) = value
+            .get("customTitle")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            custom_title = Some(title.to_string());
+        }
+        if let Some(title) = value
+            .get("aiTitle")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            ai_title = Some(title.to_string());
+        }
         records.push(parse_record(line_index, &raw, value));
     }
 
@@ -337,12 +355,16 @@ pub fn parse_session_file(
         .iter()
         .filter(|record| record.is_visible_message())
         .collect();
-    let title = visible
-        .iter()
-        .find(|record| record.role.as_deref() == Some("user"))
-        .map(|record| record.visible_text())
-        .filter(|text| !text.is_empty())
-        .map(|text| text.chars().take(60).collect())
+    let title = custom_title
+        .or(ai_title)
+        .or_else(|| {
+            visible
+                .iter()
+                .find(|record| record.role.as_deref() == Some("user"))
+                .map(|record| record.visible_text())
+                .filter(|text| !text.is_empty())
+                .map(|text| text.chars().take(60).collect())
+        })
         .unwrap_or_else(|| "未命名会话".into());
     let preview = visible
         .last()
@@ -429,6 +451,18 @@ mod tests {
         let detail = parse_session_file(&path, &root, Some(Path::new("C:/work"))).unwrap();
         assert!(matches!(detail.records[0].blocks[0], ContentBlock::Thinking { .. }));
         assert!(matches!(detail.records[0].blocks[1], ContentBlock::Unknown { .. }));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_custom_title_overrides_first_prompt() {
+        let (root, path) = fixture(&[
+            r#"{"type":"user","sessionId":"s1","cwd":"C:/work","uuid":"u1","message":{"role":"user","content":"first prompt"}}"#,
+            r#"{"type":"custom-title","customTitle":"Renamed session","sessionId":"s1"}"#,
+        ]);
+        let detail = parse_session_file(&path, &root, Some(Path::new("C:/work"))).unwrap();
+        assert_eq!(detail.summary.title, "Renamed session");
+        assert_eq!(detail.summary.message_count, 1);
         let _ = fs::remove_dir_all(root);
     }
 }

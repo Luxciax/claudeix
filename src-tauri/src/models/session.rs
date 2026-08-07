@@ -5,6 +5,28 @@ use std::path::{Path, PathBuf};
 
 use super::transcript::TranscriptRecord;
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRenameRequest {
+    pub session_key: String,
+    pub expected_file_fingerprint: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRenameResult {
+    pub detail: SessionDetail,
+    pub snapshot: crate::models::edit::BackupSnapshot,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionArchiveRequest {
+    pub session_key: String,
+    pub archived: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionIdentity {
     pub config_dir: PathBuf,
