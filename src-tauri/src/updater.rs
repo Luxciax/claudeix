@@ -9,11 +9,7 @@ use serde::Serialize;
 use std::process::{Command, Stdio};
 
 /// Release repository queried for version tags.
-const UPDATE_REPO_URL: &str = "https://github.com/MarshallEriksen-Neura/pi-agent-desktop.git";
-
-/// The pi CLI's release repository — pi ships as semver tags on pi-mono, not
-/// on npm (the npm packages lag behind). `pi update` is the installer.
-const PI_CLI_REPO_URL: &str = "https://github.com/badlogic/pi-mono.git";
+const UPDATE_REPO_URL: &str = "https://github.com/Luxciax/claudeix.git";
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -133,71 +129,6 @@ pub async fn update_check(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
         latest_commit,
         update_available,
     })
-}
-
-/* ── pi CLI update check ─────────────────────────────────────────────────
-   The desktop app is a GUI over the `pi` CLI; the CLI updates itself with
-   `pi update` (invoked from the frontend through the existing `pi_cli`
-   command). This check only answers "is a newer pi available?". */
-
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PiCliUpdateInfo {
-    /// `pi --version` output; None when the binary isn't on PATH.
-    installed: Option<String>,
-    latest: Option<String>,
-    update_available: bool,
-}
-
-/// `pi --version` → "0.81.1"; None when pi is missing or errors.
-fn pi_installed_version() -> Option<String> {
-    let mut cmd = crate::pi_command::command(None).ok()?;
-    cmd.arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!v.is_empty()).then_some(v)
-}
-
-#[tauri::command]
-pub async fn pi_cli_update_check() -> Result<PiCliUpdateInfo, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let installed = pi_installed_version();
-        // No pi → nothing to compare; skip the remote query entirely.
-        if installed.is_none() {
-            return Ok(PiCliUpdateInfo {
-                installed: None,
-                latest: None,
-                update_available: false,
-            });
-        }
-        let latest = latest_remote_tag(PI_CLI_REPO_URL)?.map(|(tag, _)| tag);
-        let update_available = match (
-            installed.as_deref().and_then(semver),
-            latest.as_deref().and_then(semver),
-        ) {
-            (Some(cur), Some(new)) => semver_gt(&new, &cur),
-            _ => false,
-        };
-        Ok(PiCliUpdateInfo {
-            installed,
-            latest,
-            update_available,
-        })
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 /// One-tap update. The download/install pipeline lands together with the

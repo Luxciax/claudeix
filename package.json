@@ -9,8 +9,6 @@
   },
   "homepage": "https://github.com/Luxciax/claudeix",
   "scripts": {
-    "predev": "node scripts/gen-pet-manifest.mjs",
-    "prebuild": "node scripts/gen-pet-manifest.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

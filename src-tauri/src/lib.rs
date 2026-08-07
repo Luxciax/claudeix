@@ -1,15 +1,8 @@
 mod app_paths;
-mod chat_store;
 mod claude;
 mod fs_bridge;
-mod pet_window;
-mod pi_bridge;
-mod pi_command;
-mod pi_models;
-mod pi_settings;
 mod projects;
 mod updater;
-mod wsl;
 mod models;
 mod transcript;
 mod trash;
@@ -20,7 +13,6 @@ use tauri::{
     App, Manager, PhysicalPosition, PhysicalSize,
 };
 
-use pi_bridge::PiProc;
 use claude::{RuntimeRegistry, SessionCatalog};
 use transcript::editor::TranscriptEditor;
 use trash::service::TrashService;
@@ -66,12 +58,6 @@ fn clamp_to_work_area(window: &tauri::WebviewWindow) {
     if x != pos.x || y != pos.y {
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
-}
-
-/// Intercept the executable's `-c <command>` form before Tauri starts. Pi uses
-/// this entry point as its WSL-compatible custom shell.
-pub fn run_shell_bridge_if_requested() -> Option<i32> {
-    wsl::run_shell_bridge_if_requested()
 }
 
 /// Open an http(s) URL in the system default browser (terminal web-links).
@@ -195,19 +181,11 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(PiProc::default())
         .manage(RuntimeRegistry::default())
         .manage(TranscriptEditor::default())
         .manage(TrashService::default())
         .manage(SessionCatalog::default())
-        .manage(chat_store::ChatDb::default())
         .invoke_handler(tauri::generate_handler![
-            chat_store::chat_sessions_list,
-            chat_store::chat_sessions_sync_native,
-            chat_store::chat_session_load,
-            chat_store::chat_session_save,
-            chat_store::chat_session_rename,
-            chat_store::chat_session_delete,
             claude::commands::claude_status,
             claude::commands::claude_config,
             claude::commands::session_scan,
@@ -232,46 +210,16 @@ pub fn run() {
             trash::service::trash_purge_preview,
             trash::service::trash_purge,
             claude::runtime_registry::runtime_probe_external,
-            pi_bridge::pi_start,
-            pi_bridge::pi_send,
-            pi_bridge::pi_stop,
-            pi_bridge::pi_generate_title,
             fs_bridge::workspace_root,
-            fs_bridge::fs_list_dir,
-            fs_bridge::fs_read_file,
-            fs_bridge::fs_read_file_base64,
-            fs_bridge::fs_write_file,
-            fs_bridge::fs_create_file,
-            fs_bridge::fs_create_dir,
-            fs_bridge::fs_delete,
-            fs_bridge::fs_rename,
-            pi_settings::pi_settings_read,
-            pi_settings::pi_settings_write,
-            pi_settings::pi_cli,
             projects::projects_recent,
             projects::project_open,
             projects::project_remove_recent,
             projects::project_pick,
-            projects::runtime_config_read,
-            projects::runtime_config_write,
-            wsl::wsl_list_distros,
-            wsl::wsl_shell_bridge_path,
-            wsl::wsl_runtime_validate,
             updater::update_check,
             updater::update_apply,
-            updater::pi_cli_update_check,
-            pet_window::pet_window_show,
-            pet_window::pet_window_hide,
-            pet_window::pet_window_toggle,
-            pet_window::pet_window_set_position,
-            pet_window::list_custom_pets,
-            open_external,
-            pi_models::pi_fetch_models
+            open_external
         ])
         .setup(|app| {
-            if let Err(e) = pet_window::create_pet_window(app.handle()) {
-                eprintln!("[pet-window] failed to pre-create pet window: {e}");
-            }
             if let Err(e) = create_tray(app) {
                 eprintln!("[tray] failed to create system tray: {e}");
             }

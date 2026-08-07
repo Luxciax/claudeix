@@ -53,6 +53,9 @@ Claudeix 是一个面向 Claude Code 的轻量 Windows 桌面客户端。
 - 回收站支持 SHA-256 校验、安全原路径恢复和不同内容的交换恢复；
 - 交换恢复会先把当前冲突版本保存成新的回收站条目，两份内容均保留；
 - 回收站默认不自动清理；永久删除必须先预览完整路径，再输入指定确认短语；
+- 运行层已脱离 Pi / WSL / Pet：这些旧源码暂时保留在仓库中，但不再参与 Rust 模块编译、Tauri 命令注册或启动流程；
+- 工作区状态写入 `~/.claudeix/desktop.json`，首次可兼容读取旧 `~/.pi/agent/desktop.json`，不会修改或删除旧状态文件；
+- 前端构建不再运行宠物 manifest 生成脚本；
 - 运行中止。
 
 尚未完成：
@@ -99,4 +102,4 @@ pnpm test:claude-stdio
 
 ## 项目基座
 
-Claudeix 从 Pi Desktop 的 Tauri + Next.js 桌面壳演化而来，但使用独立仓库和独立提交历史。后续会逐步移除未使用的 Pi 专属模块。
+Claudeix 从 Pi Desktop 的 Tauri + Next.js 桌面壳演化而来，但使用独立仓库和独立提交历史。当前运行与编译入口已经脱离 Pi；旧 Pi/Pet/WSL 源文件仅作为尚未物理清理的历史基座保留，不属于 Claudeix 的运行时架构。

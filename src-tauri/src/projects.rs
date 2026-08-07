@@ -1,11 +1,10 @@
 //! Project selection & recent-projects persistence for the desktop app.
 //!
-//! State lives in `~/.pi/agent/desktop.json` — owned by the desktop app, never
-//! read by the pi CLI. The last-opened project becomes the workspace root on
-//! the next launch (see `fs_bridge::workspace_root`).
+//! State lives in `~/.claudeix/desktop.json`. For one-way migration, Claudeix
+//! can still read the legacy Pi Desktop state when the new file does not exist.
+//! The legacy file is never modified or deleted.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,7 +12,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const MAX_RECENTS: usize = 10;
 
 fn desktop_json_path() -> Result<PathBuf, String> {
-    Ok(crate::pi_settings::home_dir()?
+    Ok(crate::app_paths::claudeix_data_dir()?.join("desktop.json"))
+}
+
+fn legacy_desktop_json_path() -> Result<PathBuf, String> {
+    Ok(crate::app_paths::home_dir()?
         .join(".pi")
         .join("agent")
         .join("desktop.json"))
@@ -28,75 +31,26 @@ pub struct RecentProject {
     pub last_opened_at: u64,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct ShellSettingsBackup {
-    pub shell_path: Option<serde_json::Value>,
-    pub shell_command_prefix: Option<serde_json::Value>,
-}
-
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct DesktopState {
     last_project: Option<String>,
     recent_projects: Vec<RecentProject>,
-    /// Where Pi's bash commands run (Windows vs WSL). App-owned metadata.
-    runtime: crate::wsl::RuntimeConfig,
-    /// Original project-level shell overrides, keyed by normalized project root.
-    project_shell_backups: BTreeMap<String, ShellSettingsBackup>,
-}
-
-/// Read the persisted command-runtime config. The shell bridge reads this for
-/// every command so distro switches never depend on process-global state.
-pub fn runtime_config() -> crate::wsl::RuntimeConfig {
-    read_state().runtime
-}
-
-#[tauri::command]
-pub fn runtime_config_read() -> crate::wsl::RuntimeConfig {
-    runtime_config()
-}
-
-#[tauri::command]
-pub fn runtime_config_write(config: crate::wsl::RuntimeConfig) -> Result<(), String> {
-    let mut st = read_state();
-    st.runtime = config;
-    write_state(&st)
-}
-
-/// Canonical key for a project root — forward slashes, no trailing slash. Used
-/// wherever app-owned state is filed per project (shell backups, chat sessions).
-pub fn project_key(root: &str) -> String {
-    root.replace('\\', "/").trim_end_matches('/').to_string()
-}
-
-pub fn project_shell_backup(root: &str) -> Option<ShellSettingsBackup> {
-    read_state()
-        .project_shell_backups
-        .get(&project_key(root))
-        .cloned()
-}
-
-pub fn project_shell_backup_write(root: &str, backup: ShellSettingsBackup) -> Result<(), String> {
-    let mut state = read_state();
-    state
-        .project_shell_backups
-        .insert(project_key(root), backup);
-    write_state(&state)
-}
-
-pub fn project_shell_backup_remove(root: &str) -> Result<(), String> {
-    let mut state = read_state();
-    state.project_shell_backups.remove(&project_key(root));
-    write_state(&state)
 }
 
 fn read_state() -> DesktopState {
-    desktop_json_path()
-        .ok()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    for path in [desktop_json_path(), legacy_desktop_json_path()]
+        .into_iter()
+        .flatten()
+    {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        if let Ok(state) = serde_json::from_str(&content) {
+            return state;
+        }
+    }
+    DesktopState::default()
 }
 
 fn write_state(state: &DesktopState) -> Result<(), String> {
@@ -156,7 +110,6 @@ pub fn project_open(path: String) -> Result<String, String> {
     }
     let canon = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     let root = normalize(&canon);
-    crate::wsl::validate_project_path(&runtime_config(), &root)?;
     let name = canon
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
