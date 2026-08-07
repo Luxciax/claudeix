@@ -11,6 +11,13 @@ import type {
   TranscriptRestoreResult,
 } from "@/features/sessions/types";
 import type { ExternalRuntimeInfo, RuntimeSnapshot } from "@/features/runtime/types";
+import type {
+  TrashDeletePreview,
+  TrashItemSummary,
+  TrashPurgePreview,
+  TrashRestorePreview,
+  TrashRestoreResult,
+} from "@/features/trash/types";
 
 export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -63,4 +70,25 @@ export const api = {
   listRuntimes: () => invoke<RuntimeSnapshot[]>("runtime_list"),
   probeExternalRuntime: (sessionKey: string) =>
     invoke<ExternalRuntimeInfo>("runtime_probe_external", { sessionKey }),
+  previewTrashDelete: (sessionKey: string) =>
+    invoke<TrashDeletePreview>("trash_delete_preview", { sessionKey }),
+  moveSessionToTrash: (request: {
+    sessionKey: string;
+    expectedPreviewFingerprint: string;
+  }) => invoke<TrashItemSummary>("trash_move", { request }),
+  listTrash: () => invoke<TrashItemSummary[]>("trash_list"),
+  previewTrashRestore: (trashId: string) =>
+    invoke<TrashRestorePreview>("trash_restore_preview", { trashId }),
+  restoreTrash: (request: {
+    trashId: string;
+    strategy: "safe" | "exchange";
+    expectedPreviewFingerprint: string;
+  }) => invoke<TrashRestoreResult>("trash_restore", { request }),
+  previewTrashPurge: (trashId: string) =>
+    invoke<TrashPurgePreview>("trash_purge_preview", { trashId }),
+  purgeTrash: (request: {
+    trashId: string;
+    confirmationText: string;
+    expectedPreviewFingerprint: string;
+  }) => invoke<void>("trash_purge", { request }),
 };

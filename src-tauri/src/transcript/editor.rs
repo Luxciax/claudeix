@@ -8,6 +8,7 @@ use crate::models::edit::{
 };
 use crate::models::session::{SessionDetail, SessionIdentity};
 use crate::models::transcript::EditTarget;
+use crate::trash::service::TrashService;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -564,10 +565,17 @@ fn restore_snapshot(
 pub fn transcript_edit(
     editor: State<'_, TranscriptEditor>,
     runtime: State<'_, RuntimeRegistry>,
+    trash: State<'_, TrashService>,
     catalog: State<'_, SessionCatalog>,
     request: TranscriptEditRequest,
 ) -> Result<TranscriptEditResult, String> {
+    if trash.is_locked(&request.session_key) {
+        return Err("this Claude session is currently being moved to the recycle bin".to_string());
+    }
     let _lease = editor.acquire(&request.session_key)?;
+    if trash.is_locked(&request.session_key) {
+        return Err("this Claude session started a recycle-bin transaction while the edit was being prepared".to_string());
+    }
     let identity = identity_from_catalog(&catalog, &request.session_key)?;
     ensure_editable_runtime_state(&runtime, &identity, &request.session_key)?;
     apply_edit(&identity, &request, &claudeix_backups_dir()?)
@@ -595,10 +603,17 @@ pub fn transcript_snapshots_list(
 pub fn transcript_snapshot_restore(
     editor: State<'_, TranscriptEditor>,
     runtime: State<'_, RuntimeRegistry>,
+    trash: State<'_, TrashService>,
     catalog: State<'_, SessionCatalog>,
     request: TranscriptRestoreRequest,
 ) -> Result<TranscriptRestoreResult, String> {
+    if trash.is_locked(&request.session_key) {
+        return Err("this Claude session is currently being moved to the recycle bin".to_string());
+    }
     let _lease = editor.acquire(&request.session_key)?;
+    if trash.is_locked(&request.session_key) {
+        return Err("this Claude session started a recycle-bin transaction while restore was being prepared".to_string());
+    }
     let identity = identity_from_catalog(&catalog, &request.session_key)?;
     ensure_editable_runtime_state(&runtime, &identity, &request.session_key)?;
     restore_snapshot(&identity, &request, &claudeix_backups_dir()?)

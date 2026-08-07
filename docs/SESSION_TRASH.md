@@ -1,5 +1,11 @@
 # Claudeix 会话回收站设计
 
+## 当前实现说明
+
+第一版已实现本文件的核心删除与恢复闭环。文件归属采取保守规则：只移动主会话 `sourcePath`，以及主会话同目录下与 `sessionId` **完全同名**目录中的文件。Claude Code 2.1.219 的子代理位于 `<sessionId>/subagents/agent-*.jsonl`，因此能够明确归属；其他位置的文件不会根据正文或相似名称猜测性删除。
+
+当前回收站索引直接读取 `<CLAUDE_CONFIG_DIR>/.claudeix-trash/` 中的 manifest；SQLite 统一索引属于后续性能优化，不参与正文和恢复真相源。
+
 ## 1. 目标
 
 Claudeix 支持删除整个 Claude Code 会话，但默认删除行为不是永久删除，而是将原始会话文件移入 Claudeix 回收站。

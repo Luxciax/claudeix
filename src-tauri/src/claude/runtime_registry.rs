@@ -7,6 +7,7 @@ use crate::models::runtime::{
 };
 use crate::models::session::SessionIdentity;
 use crate::transcript::editor::TranscriptEditor;
+use crate::trash::service::TrashService;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -529,6 +530,7 @@ pub fn runtime_start(
     app: AppHandle,
     registry: State<'_, RuntimeRegistry>,
     editor: State<'_, TranscriptEditor>,
+    trash: State<'_, TrashService>,
     catalog: State<'_, SessionCatalog>,
     request: RuntimeStartRequest,
 ) -> Result<RuntimeSnapshot, String> {
@@ -542,6 +544,9 @@ pub fn runtime_start(
     let identity = if let Some(session_key) = request.session_key.as_deref() {
         if editor.is_locked(session_key) {
             return Err("this Claude session is currently being edited or restored".to_string());
+        }
+        if trash.is_locked(session_key) {
+            return Err("this Claude session is currently being moved to the recycle bin".to_string());
         }
         let identity = catalog
             .0
@@ -565,6 +570,16 @@ pub fn runtime_start(
         .map(|key| format!("session:{key}"))
         .unwrap_or_else(|| format!("new:{}", normalized(&workspace)));
     registry.reserve_lease(&lease_key, &runtime_id)?;
+    if let Some(session_key) = request.session_key.as_deref() {
+        if editor.is_locked(session_key) {
+            registry.release_reservation(&lease_key, &runtime_id);
+            return Err("this Claude session started an edit while runtime startup was being prepared".to_string());
+        }
+        if trash.is_locked(session_key) {
+            registry.release_reservation(&lease_key, &runtime_id);
+            return Err("this Claude session started a recycle-bin transaction while runtime startup was being prepared".to_string());
+        }
+    }
 
     let mut command = match locator::build_command() {
         Ok(command) => command,

@@ -48,6 +48,10 @@ pub fn claudeix_backups_dir() -> Result<PathBuf, String> {
     Ok(claudeix_data_dir()?.join("backups"))
 }
 
+pub fn claude_trash_dir(config_dir: &Path) -> PathBuf {
+    config_dir.join(".claudeix-trash")
+}
+
 pub fn canonical_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }

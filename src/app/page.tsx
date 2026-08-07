@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, History, Play, Plus, RefreshCw, Square, Terminal } from "lucide-react";
+import { FolderOpen, History, Play, Plus, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
 
 import { RuntimeTimeline } from "@/features/runtime/RuntimeTimeline";
 import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import type { ExternalRuntimeInfo } from "@/features/runtime/types";
 import { useSessionStore } from "@/features/sessions/session-store";
 import type { BackupSnapshot, ClaudeStatus, EditTarget } from "@/features/sessions/types";
+import { DeleteSessionDialog } from "@/features/trash/DeleteSessionDialog";
+import { TrashPanel } from "@/features/trash/TrashPanel";
+import type { TrashDeletePreview } from "@/features/trash/types";
 import { SnapshotPanel } from "@/features/transcript/SnapshotPanel";
 import { TranscriptTimeline } from "@/features/transcript/TranscriptTimeline";
 import { useTranscriptStore } from "@/features/transcript/transcript-store";
@@ -24,6 +27,9 @@ export default function Home() {
   const [externalRuntime, setExternalRuntime] = useState<ExternalRuntimeInfo | null>(null);
   const [checkingExternal, setCheckingExternal] = useState(false);
   const [showSnapshots, setShowSnapshots] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
+  const [deletePreview, setDeletePreview] = useState<TrashDeletePreview | null>(null);
+  const [trashMutating, setTrashMutating] = useState(false);
   const [advancedAssistantEditing, setAdvancedAssistantEditing] = useState(false);
 
   const workspace = useSessionStore((state) => state.workspaceRoot);
@@ -238,6 +244,38 @@ export default function Home() {
     if (workspace) await scanSessions(workspace, true);
   };
 
+  const previewSessionDelete = async () => {
+    if (!activeKey || running || transcriptMutating) return;
+    try {
+      const preview = await api.previewTrashDelete(activeKey);
+      setDeletePreview(preview);
+    } catch (error) {
+      window.alert(`无法生成删除预览：${String(error)}`);
+    }
+  };
+
+  const confirmSessionDelete = async () => {
+    if (!deletePreview) return;
+    setTrashMutating(true);
+    try {
+      await api.moveSessionToTrash({
+        sessionKey: deletePreview.sessionKey,
+        expectedPreviewFingerprint: deletePreview.previewFingerprint,
+      });
+      setDeletePreview(null);
+      setActiveKey(null);
+      clearTranscript();
+      resetRuntime();
+      setShowSnapshots(false);
+      if (workspace) await scanSessions(workspace, true);
+      setShowTrash(true);
+    } catch (error) {
+      window.alert(`移入回收站失败：${String(error)}`);
+    } finally {
+      setTrashMutating(false);
+    }
+  };
+
   return (
     <main
       style={{
@@ -317,6 +355,29 @@ export default function Home() {
           }}
         >
           <Plus size={15} /> 新建会话
+        </button>
+
+        <button
+          onClick={() => {
+            setShowSnapshots(false);
+            setShowTrash(true);
+          }}
+          disabled={running || transcriptMutating}
+          style={{
+            marginTop: 2,
+            width: "100%",
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            padding: "9px 12px",
+            borderRadius: 10,
+            border: "none",
+            background: showTrash ? "var(--bg-selected)" : "transparent",
+            color: "var(--text-primary)",
+            opacity: running || transcriptMutating ? 0.55 : 1,
+          }}
+        >
+          <Trash2 size={15} /> 回收站
         </button>
 
         <div
@@ -450,6 +511,7 @@ export default function Home() {
             {activeKey && (
               <button
                 onClick={() => {
+                  setShowTrash(false);
                   setShowSnapshots((current) => !current);
                   void loadSnapshots(activeKey);
                 }}
@@ -470,6 +532,26 @@ export default function Home() {
                 }}
               >
                 <History size={14} /> 恢复
+              </button>
+            )}
+            {activeKey && (
+              <button
+                onClick={() => void previewSessionDelete()}
+                disabled={running || transcriptMutating}
+                title="将此会话和明确关联的子代理文件移入 Claudeix 回收站"
+                style={{
+                  width: 32,
+                  height: 32,
+                  display: "grid",
+                  placeItems: "center",
+                  border: "1px solid var(--separator)",
+                  borderRadius: 8,
+                  background: "var(--bg-elevated)",
+                  color: "var(--danger)",
+                  opacity: running || transcriptMutating ? 0.5 : 1,
+                }}
+              >
+                <Trash2 size={14} />
               </button>
             )}
             {externalRuntime?.active && (
@@ -662,7 +744,23 @@ export default function Home() {
             onRestore={(snapshot) => void restoreSnapshot(snapshot)}
           />
         )}
+        {showTrash && (
+          <TrashPanel
+            onClose={() => setShowTrash(false)}
+            onRestored={() => {
+              if (workspace) void scanSessions(workspace, true);
+            }}
+          />
+        )}
       </section>
+      {deletePreview && (
+        <DeleteSessionDialog
+          preview={deletePreview}
+          mutating={trashMutating}
+          onCancel={() => setDeletePreview(null)}
+          onConfirm={() => void confirmSessionDelete()}
+        />
+      )}
     </main>
   );
 }

@@ -12,6 +12,7 @@ mod updater;
 mod wsl;
 mod models;
 mod transcript;
+mod trash;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -22,6 +23,7 @@ use tauri::{
 use pi_bridge::PiProc;
 use claude::{RuntimeRegistry, SessionCatalog};
 use transcript::editor::TranscriptEditor;
+use trash::service::TrashService;
 
 /// Keep the main window fully inside the current monitor's work area: shrink it
 /// if it is larger than the work area, then clamp its position. Without this,
@@ -196,6 +198,7 @@ pub fn run() {
         .manage(PiProc::default())
         .manage(RuntimeRegistry::default())
         .manage(TranscriptEditor::default())
+        .manage(TrashService::default())
         .manage(SessionCatalog::default())
         .manage(chat_store::ChatDb::default())
         .invoke_handler(tauri::generate_handler![
@@ -218,6 +221,13 @@ pub fn run() {
             transcript::editor::transcript_edit,
             transcript::editor::transcript_snapshots_list,
             transcript::editor::transcript_snapshot_restore,
+            trash::service::trash_delete_preview,
+            trash::service::trash_move,
+            trash::service::trash_list,
+            trash::service::trash_restore_preview,
+            trash::service::trash_restore,
+            trash::service::trash_purge_preview,
+            trash::service::trash_purge,
             claude::runtime_registry::runtime_probe_external,
             pi_bridge::pi_start,
             pi_bridge::pi_send,
