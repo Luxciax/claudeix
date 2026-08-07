@@ -1,10 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type {
+  BackupSnapshot,
   ClaudeConfig,
   ClaudeStatus,
+  EditTarget,
   SessionDetail,
   SessionSummary,
+  TranscriptEditResult,
+  TranscriptRestoreResult,
 } from "@/features/sessions/types";
 import type { ExternalRuntimeInfo, RuntimeSnapshot } from "@/features/runtime/types";
 
@@ -24,6 +28,20 @@ export const api = {
     invoke<SessionDetail>("session_get", { sessionKey }),
   refreshSession: (sessionKey: string) =>
     invoke<SessionDetail>("session_refresh", { sessionKey }),
+  editTranscript: (request: {
+    sessionKey: string;
+    target: EditTarget;
+    expectedFileFingerprint: string;
+    newText: string;
+    allowAssistantText: boolean;
+  }) => invoke<TranscriptEditResult>("transcript_edit", { request }),
+  listTranscriptSnapshots: (sessionKey: string) =>
+    invoke<BackupSnapshot[]>("transcript_snapshots_list", { sessionKey }),
+  restoreTranscriptSnapshot: (request: {
+    sessionKey: string;
+    snapshotId: string;
+    expectedFileFingerprint: string;
+  }) => invoke<TranscriptRestoreResult>("transcript_snapshot_restore", { request }),
   startRuntime: (request: {
     workspaceRoot: string;
     sessionKey: string | null;

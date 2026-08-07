@@ -5,6 +5,8 @@ use crate::models::runtime::{
     ExternalRuntimeInfo, PermissionDecisionRequest, RuntimeEvent, RuntimeSnapshot,
     RuntimeStartRequest, RuntimeStatus,
 };
+use crate::models::session::SessionIdentity;
+use crate::transcript::editor::TranscriptEditor;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -288,6 +290,72 @@ impl RuntimeRegistry {
             .unwrap_or_default()
     }
 
+    pub fn session_active(&self, session_key: &str) -> bool {
+        self.state
+            .lock()
+            .map(|state| {
+                state.runtimes.values().any(|entry| {
+                    entry.snapshot.session_key.as_deref() == Some(session_key)
+                        && !matches!(
+                            entry.snapshot.status,
+                            RuntimeStatus::Completed | RuntimeStatus::Failed
+                        )
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn probe_external_identity(&self, identity: &SessionIdentity) -> ExternalRuntimeInfo {
+        let owned_pids = self.owned_pids();
+        let current_pid = std::process::id();
+        let system = System::new_all();
+
+        for (pid, process) in system.processes() {
+            let pid = pid.as_u32();
+            if pid == current_pid || owned_pids.contains(&pid) {
+                continue;
+            }
+            let name = process.name();
+            let command_line = process
+                .cmd()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !looks_like_claude_process(name, process.exe(), &command_line) {
+                continue;
+            }
+            let Some(match_kind) = external_match_kind(
+                &command_line,
+                process.cwd(),
+                &identity.session_id,
+                &identity.workspace_root,
+            ) else {
+                continue;
+            };
+            return ExternalRuntimeInfo {
+                active: true,
+                pid: Some(pid),
+                executable_path: process
+                    .exe()
+                    .map(|path| path.to_string_lossy().to_string()),
+                match_kind: Some(match_kind.to_string()),
+                warning: Some(
+                    "An external Claude Code process may be writing to this session. Claudeix will not resume or edit it until the external process exits."
+                        .to_string(),
+                ),
+            };
+        }
+
+        ExternalRuntimeInfo {
+            active: false,
+            pid: None,
+            executable_path: None,
+            match_kind: None,
+            warning: None,
+        }
+    }
+
     pub fn stop_all(&self) {
         let running = {
             let Ok(mut state) = self.state.lock() else {
@@ -460,6 +528,7 @@ fn terminate_owned_process(pid: u32, child: &Arc<Mutex<Child>>) -> Result<(), St
 pub fn runtime_start(
     app: AppHandle,
     registry: State<'_, RuntimeRegistry>,
+    editor: State<'_, TranscriptEditor>,
     catalog: State<'_, SessionCatalog>,
     request: RuntimeStartRequest,
 ) -> Result<RuntimeSnapshot, String> {
@@ -471,6 +540,9 @@ pub fn runtime_start(
 
     let workspace = canonical_workspace(&request.workspace_root)?;
     let identity = if let Some(session_key) = request.session_key.as_deref() {
+        if editor.is_locked(session_key) {
+            return Err("this Claude session is currently being edited or restored".to_string());
+        }
         let identity = catalog
             .0
             .lock()
@@ -769,54 +841,7 @@ pub fn runtime_probe_external(
         .get(&session_key)
         .cloned()
         .ok_or_else(|| "session is not present in the current catalog".to_string())?;
-    let owned_pids = registry.owned_pids();
-    let current_pid = std::process::id();
-    let system = System::new_all();
-
-    for (pid, process) in system.processes() {
-        let pid = pid.as_u32();
-        if pid == current_pid || owned_pids.contains(&pid) {
-            continue;
-        }
-        let name = process.name();
-        let command_line = process
-            .cmd()
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !looks_like_claude_process(&name, process.exe(), &command_line) {
-            continue;
-        }
-        let Some(match_kind) = external_match_kind(
-            &command_line,
-            process.cwd(),
-            &identity.session_id,
-            &identity.workspace_root,
-        ) else {
-            continue;
-        };
-        return Ok(ExternalRuntimeInfo {
-            active: true,
-            pid: Some(pid),
-            executable_path: process
-                .exe()
-                .map(|path| path.to_string_lossy().to_string()),
-            match_kind: Some(match_kind.to_string()),
-            warning: Some(
-                "An external Claude Code process may be writing to this session. Claudeix will not resume it until the external process exits."
-                    .to_string(),
-            ),
-        });
-    }
-
-    Ok(ExternalRuntimeInfo {
-        active: false,
-        pid: None,
-        executable_path: None,
-        match_kind: None,
-        warning: None,
-    })
+    Ok(registry.probe_external_identity(&identity))
 }
 
 #[cfg(test)]

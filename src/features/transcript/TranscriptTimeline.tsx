@@ -1,7 +1,20 @@
-import { AlertTriangle, Brain, FileImage, TerminalSquare, Wrench } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import {
+  AlertTriangle,
+  Brain,
+  FileImage,
+  Pencil,
+  Save,
+  TerminalSquare,
+  Wrench,
+  X,
+} from "lucide-react";
 
 import type {
   ContentBlock,
+  EditTarget,
   SessionDetail,
   TranscriptRecord,
 } from "@/features/sessions/types";
@@ -15,10 +28,128 @@ function pretty(value: unknown): string {
   }
 }
 
-function BlockView({ block }: { block: ContentBlock }) {
+function BlockView({
+  block,
+  target,
+  editingDisabled,
+  mutating,
+  onEdit,
+}: {
+  block: ContentBlock;
+  target: EditTarget | null;
+  editingDisabled: boolean;
+  mutating: boolean;
+  onEdit: (target: EditTarget, newText: string) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
   switch (block.type) {
     case "text":
-      return <div style={{ whiteSpace: "pre-wrap" }}>{block.text}</div>;
+      if (editing && target) {
+        return (
+          <div
+            style={{
+              display: "grid",
+              gap: 9,
+              padding: 11,
+              border: "1px solid var(--warning)",
+              borderRadius: 10,
+              background: "var(--warning-soft)",
+            }}
+          >
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              disabled={mutating}
+              rows={Math.min(14, Math.max(4, draft.split("\n").length + 2))}
+              style={{
+                width: "100%",
+                resize: "vertical",
+                border: "1px solid var(--separator)",
+                borderRadius: 8,
+                background: "var(--bg-elevated)",
+                color: "var(--text-primary)",
+                padding: 10,
+                font: "inherit",
+                lineHeight: 1.55,
+              }}
+            />
+            <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+              保存后会直接覆盖 Claude Code 原始 JSONL；写入前会自动创建完整快照。
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                onClick={() => setEditing(false)}
+                disabled={mutating}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  border: "1px solid var(--separator)",
+                  borderRadius: 8,
+                  background: "var(--bg-elevated)",
+                  color: "var(--text-primary)",
+                  padding: "7px 10px",
+                }}
+              >
+                <X size={14} /> 取消
+              </button>
+              <button
+                onClick={async () => {
+                  const saved = await onEdit(target, draft);
+                  if (saved) setEditing(false);
+                }}
+                disabled={mutating || draft === block.text}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  border: "none",
+                  borderRadius: 8,
+                  background: "var(--accent)",
+                  color: "white",
+                  padding: "7px 10px",
+                  opacity: mutating || draft === block.text ? 0.5 : 1,
+                }}
+              >
+                <Save size={14} /> {mutating ? "写入中…" : "保存并覆盖原会话"}
+              </button>
+            </div>
+          </div>
+        );
+      }
+      return (
+        <div style={{ position: "relative", whiteSpace: "pre-wrap", paddingRight: target ? 34 : 0 }}>
+          {block.text}
+          {target && (
+            <button
+              onClick={() => {
+                setDraft(block.text);
+                setEditing(true);
+              }}
+              disabled={editingDisabled || mutating}
+              title={editingDisabled ? "会话运行或被外部 Claude 占用时不能编辑" : "编辑这条用户消息"}
+              style={{
+                position: "absolute",
+                top: -4,
+                right: -4,
+                width: 28,
+                height: 28,
+                display: "grid",
+                placeItems: "center",
+                border: "1px solid var(--separator)",
+                borderRadius: 8,
+                background: "var(--bg-elevated)",
+                color: "var(--text-secondary)",
+                opacity: editingDisabled || mutating ? 0.45 : 1,
+              }}
+            >
+              <Pencil size={13} />
+            </button>
+          )}
+        </div>
+      );
     case "thinking":
       return (
         <details
@@ -99,7 +230,19 @@ function BlockView({ block }: { block: ContentBlock }) {
   }
 }
 
-function RecordView({ record }: { record: TranscriptRecord }) {
+function RecordView({
+  record,
+  allowAssistantEditing,
+  editingDisabled,
+  mutating,
+  onEdit,
+}: {
+  record: TranscriptRecord;
+  allowAssistantEditing: boolean;
+  editingDisabled: boolean;
+  mutating: boolean;
+  onEdit: (target: EditTarget, newText: string) => Promise<boolean>;
+}) {
   if (record.blocks.length === 0) return null;
   const role = record.role ?? "system";
   const isUser = role === "user";
@@ -135,15 +278,47 @@ function RecordView({ record }: { record: TranscriptRecord }) {
         <span>JSONL 第 {record.lineIndex + 1} 行</span>
       </div>
       <div style={{ display: "grid", gap: 10 }}>
-        {record.blocks.map((block, index) => (
-          <BlockView key={`${record.rawHash}-${index}`} block={block} />
-        ))}
+        {record.blocks.map((block, index) => {
+          const editableRole =
+            record.role === "user" ||
+            (record.role === "assistant" && allowAssistantEditing);
+          const target =
+            editableRole && block.type === "text"
+              ? record.editableTargets.find(
+                  (candidate) =>
+                    candidate.contentIndex === index ||
+                    (candidate.contentIndex == null && index === 0),
+                ) ?? null
+              : null;
+          return (
+            <BlockView
+              key={`${record.rawHash}-${index}`}
+              block={block}
+              target={target}
+              editingDisabled={editingDisabled}
+              mutating={mutating}
+              onEdit={onEdit}
+            />
+          );
+        })}
       </div>
     </article>
   );
 }
 
-export function TranscriptTimeline({ detail }: { detail: SessionDetail }) {
+export function TranscriptTimeline({
+  detail,
+  allowAssistantEditing,
+  editingDisabled,
+  mutating,
+  onEdit,
+}: {
+  detail: SessionDetail;
+  allowAssistantEditing: boolean;
+  editingDisabled: boolean;
+  mutating: boolean;
+  onEdit: (target: EditTarget, newText: string) => Promise<boolean>;
+}) {
   const visibleRecords = detail.records.filter((record) => record.blocks.length > 0);
   return (
     <>
@@ -169,7 +344,14 @@ export function TranscriptTimeline({ detail }: { detail: SessionDetail }) {
         </div>
       )}
       {visibleRecords.map((record) => (
-        <RecordView key={`${record.lineIndex}-${record.rawHash}`} record={record} />
+        <RecordView
+          key={`${record.lineIndex}-${record.rawHash}`}
+          record={record}
+          allowAssistantEditing={allowAssistantEditing}
+          editingDisabled={editingDisabled}
+          mutating={mutating}
+          onEdit={onEdit}
+        />
       ))}
     </>
   );

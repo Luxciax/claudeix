@@ -83,3 +83,28 @@ export type SessionDetail = {
   fileFingerprint: string;
   hasBranches: boolean;
 };
+
+export type BackupSnapshot = {
+  id: string;
+  sessionId: string;
+  sourcePath: string;
+  backupPath: string;
+  createdAt: number;
+  sourceHash: string;
+  fileSize: number;
+  reason: string;
+  target: EditTarget | null;
+  oldTextHash: string | null;
+  newTextHash: string | null;
+};
+
+export type TranscriptEditResult = {
+  detail: SessionDetail;
+  snapshot: BackupSnapshot;
+};
+
+export type TranscriptRestoreResult = {
+  detail: SessionDetail;
+  currentSnapshot: BackupSnapshot;
+  restoredSnapshotId: string;
+};

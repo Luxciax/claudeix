@@ -1,21 +1,46 @@
 import { create } from "zustand";
 
-import type { SessionDetail } from "@/features/sessions/types";
+import type {
+  BackupSnapshot,
+  EditTarget,
+  SessionDetail,
+  TranscriptEditResult,
+  TranscriptRestoreResult,
+} from "@/features/sessions/types";
 import { api } from "@/lib/tauri-api";
 
 type TranscriptState = {
   detail: SessionDetail | null;
+  snapshots: BackupSnapshot[];
   loading: boolean;
+  mutating: boolean;
   error: string | null;
+  mutationError: string | null;
   load: (sessionKey: string) => Promise<SessionDetail | null>;
   refresh: (sessionKey: string) => Promise<SessionDetail | null>;
+  loadSnapshots: (sessionKey: string) => Promise<BackupSnapshot[]>;
+  edit: (
+    sessionKey: string,
+    target: EditTarget,
+    expectedFileFingerprint: string,
+    newText: string,
+    allowAssistantText: boolean,
+  ) => Promise<TranscriptEditResult | null>;
+  restore: (
+    sessionKey: string,
+    snapshotId: string,
+    expectedFileFingerprint: string,
+  ) => Promise<TranscriptRestoreResult | null>;
   clear: () => void;
 };
 
 export const useTranscriptStore = create<TranscriptState>((set) => ({
   detail: null,
+  snapshots: [],
   loading: false,
+  mutating: false,
   error: null,
+  mutationError: null,
   load: async (sessionKey) => {
     set({ loading: true, error: null, detail: null });
     try {
@@ -37,5 +62,77 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       return null;
     }
   },
-  clear: () => set({ detail: null, loading: false, error: null }),
+  loadSnapshots: async (sessionKey) => {
+    try {
+      const snapshots = await api.listTranscriptSnapshots(sessionKey);
+      set({ snapshots, mutationError: null });
+      return snapshots;
+    } catch (error) {
+      set({ mutationError: String(error) });
+      return [];
+    }
+  },
+  edit: async (
+    sessionKey,
+    target,
+    expectedFileFingerprint,
+    newText,
+    allowAssistantText,
+  ) => {
+    set({ mutating: true, mutationError: null });
+    try {
+      const result = await api.editTranscript({
+        sessionKey,
+        target,
+        expectedFileFingerprint,
+        newText,
+        allowAssistantText,
+      });
+      set((state) => ({
+        detail: result.detail,
+        snapshots: [
+          result.snapshot,
+          ...state.snapshots.filter((snapshot) => snapshot.id !== result.snapshot.id),
+        ],
+        mutating: false,
+      }));
+      return result;
+    } catch (error) {
+      set({ mutating: false, mutationError: String(error) });
+      return null;
+    }
+  },
+  restore: async (sessionKey, snapshotId, expectedFileFingerprint) => {
+    set({ mutating: true, mutationError: null });
+    try {
+      const result = await api.restoreTranscriptSnapshot({
+        sessionKey,
+        snapshotId,
+        expectedFileFingerprint,
+      });
+      set((state) => ({
+        detail: result.detail,
+        snapshots: [
+          result.currentSnapshot,
+          ...state.snapshots.filter(
+            (snapshot) => snapshot.id !== result.currentSnapshot.id,
+          ),
+        ],
+        mutating: false,
+      }));
+      return result;
+    } catch (error) {
+      set({ mutating: false, mutationError: String(error) });
+      return null;
+    }
+  },
+  clear: () =>
+    set({
+      detail: null,
+      snapshots: [],
+      loading: false,
+      mutating: false,
+      error: null,
+      mutationError: null,
+    }),
 }));

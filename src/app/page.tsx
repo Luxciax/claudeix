@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, Play, Plus, RefreshCw, Square, Terminal } from "lucide-react";
+import { FolderOpen, History, Play, Plus, RefreshCw, Square, Terminal } from "lucide-react";
 
 import { RuntimeTimeline } from "@/features/runtime/RuntimeTimeline";
 import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import type { ExternalRuntimeInfo } from "@/features/runtime/types";
 import { useSessionStore } from "@/features/sessions/session-store";
-import type { ClaudeStatus } from "@/features/sessions/types";
+import type { BackupSnapshot, ClaudeStatus, EditTarget } from "@/features/sessions/types";
+import { SnapshotPanel } from "@/features/transcript/SnapshotPanel";
 import { TranscriptTimeline } from "@/features/transcript/TranscriptTimeline";
 import { useTranscriptStore } from "@/features/transcript/transcript-store";
 import { api, isTauriRuntime } from "@/lib/tauri-api";
@@ -22,6 +23,8 @@ export default function Home() {
   const [permissionMode, setPermissionMode] = useState("manual");
   const [externalRuntime, setExternalRuntime] = useState<ExternalRuntimeInfo | null>(null);
   const [checkingExternal, setCheckingExternal] = useState(false);
+  const [showSnapshots, setShowSnapshots] = useState(false);
+  const [advancedAssistantEditing, setAdvancedAssistantEditing] = useState(false);
 
   const workspace = useSessionStore((state) => state.workspaceRoot);
   const sessions = useSessionStore((state) => state.sessions);
@@ -32,9 +35,15 @@ export default function Home() {
   const setActiveKey = useSessionStore((state) => state.setActiveKey);
 
   const detail = useTranscriptStore((state) => state.detail);
+  const snapshots = useTranscriptStore((state) => state.snapshots);
   const transcriptLoading = useTranscriptStore((state) => state.loading);
   const transcriptError = useTranscriptStore((state) => state.error);
+  const transcriptMutating = useTranscriptStore((state) => state.mutating);
+  const mutationError = useTranscriptStore((state) => state.mutationError);
   const loadTranscript = useTranscriptStore((state) => state.load);
+  const loadSnapshots = useTranscriptStore((state) => state.loadSnapshots);
+  const editTranscript = useTranscriptStore((state) => state.edit);
+  const restoreTranscript = useTranscriptStore((state) => state.restore);
   const clearTranscript = useTranscriptStore((state) => state.clear);
 
   const runtimeSnapshot = useRuntimeStore((state) => state.snapshot);
@@ -78,7 +87,7 @@ export default function Home() {
     if (running) return;
     setActiveKey(sessionKey);
     resetRuntime();
-    await loadTranscript(sessionKey);
+    await Promise.all([loadTranscript(sessionKey), loadSnapshots(sessionKey)]);
   };
 
   const newSession = () => {
@@ -86,6 +95,7 @@ export default function Home() {
     setActiveKey(null);
     clearTranscript();
     resetRuntime();
+    setShowSnapshots(false);
   };
 
   useEffect(() => {
@@ -192,6 +202,40 @@ export default function Home() {
       prompt,
       permissionMode,
     });
+  };
+
+  const saveTranscriptEdit = async (target: EditTarget, newText: string) => {
+    if (!activeKey || !detail || running || externalRuntime?.active) return false;
+    const confirmed = window.confirm(
+      "这会直接覆盖 Claude Code 原始 JSONL。\n\n写入前 Claudeix 会先保存当前完整会话快照，之后可在“修改记录与恢复”中还原。\n\n确认继续？",
+    );
+    if (!confirmed) return false;
+    const result = await editTranscript(
+      activeKey,
+      target,
+      detail.fileFingerprint,
+      newText,
+      advancedAssistantEditing,
+    );
+    if (!result) return false;
+    if (workspace) await scanSessions(workspace, true);
+    return true;
+  };
+
+  const restoreSnapshot = async (snapshot: BackupSnapshot) => {
+    if (!activeKey || !detail || running || externalRuntime?.active) return;
+    const confirmed = window.confirm(
+      `确认恢复到 ${new Date(snapshot.createdAt).toLocaleString()} 的完整会话快照？\n\n这会覆盖当前 Claude 原始 JSONL；覆盖前当前版本也会再次自动备份，因此恢复操作本身仍可撤销。`,
+    );
+    if (!confirmed) return;
+    const result = await restoreTranscript(
+      activeKey,
+      snapshot.id,
+      detail.fileFingerprint,
+    );
+    if (!result) return;
+    await loadSnapshots(activeKey);
+    if (workspace) await scanSessions(workspace, true);
   };
 
   return (
@@ -334,7 +378,14 @@ export default function Home() {
         </div>
       </aside>
 
-      <section style={{ minWidth: 0, display: "grid", gridTemplateRows: "56px 1fr auto" }}>
+      <section
+        style={{
+          minWidth: 0,
+          position: "relative",
+          display: "grid",
+          gridTemplateRows: "56px 1fr auto",
+        }}
+      >
         <header
           style={{
             display: "flex",
@@ -369,6 +420,58 @@ export default function Home() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {activeKey && (
+              <label
+                title="允许修改 Claude 可见文本；thinking、签名与工具记录仍不可编辑"
+                style={{
+                  height: 32,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "0 8px",
+                  border: "1px solid var(--separator)",
+                  borderRadius: 8,
+                  background: advancedAssistantEditing
+                    ? "var(--warning-soft)"
+                    : "var(--bg-elevated)",
+                  color: "var(--text-primary)",
+                  fontSize: 10,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={advancedAssistantEditing}
+                  onChange={(event) => setAdvancedAssistantEditing(event.target.checked)}
+                  disabled={running || transcriptMutating}
+                />
+                高级编辑 Claude 回复
+              </label>
+            )}
+            {activeKey && (
+              <button
+                onClick={() => {
+                  setShowSnapshots((current) => !current);
+                  void loadSnapshots(activeKey);
+                }}
+                disabled={running}
+                title="查看修改记录与完整快照"
+                style={{
+                  height: 32,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "0 9px",
+                  border: "1px solid var(--separator)",
+                  borderRadius: 8,
+                  background: showSnapshots ? "var(--bg-selected)" : "var(--bg-elevated)",
+                  color: "var(--text-primary)",
+                  opacity: running ? 0.55 : 1,
+                  fontSize: 11,
+                }}
+              >
+                <History size={14} /> 恢复
+              </button>
+            )}
             {externalRuntime?.active && (
               <button
                 onClick={() => void refreshExternalRuntime()}
@@ -420,6 +523,21 @@ export default function Home() {
               {transcriptError}
             </div>
           )}
+          {mutationError && (
+            <div
+              style={{
+                marginTop: transcriptError ? 10 : 0,
+                marginBottom: 12,
+                padding: 12,
+                borderRadius: 10,
+                background: "var(--warning-soft)",
+                color: "var(--danger)",
+                fontSize: 12,
+              }}
+            >
+              会话写入/恢复失败：{mutationError}
+            </div>
+          )}
           {!detail && runtimeTimeline.length === 0 && !transcriptLoading ? (
             <div
               style={{
@@ -442,7 +560,15 @@ export default function Home() {
             </div>
           ) : (
             <>
-              {detail && <TranscriptTimeline detail={detail} />}
+              {detail && (
+                <TranscriptTimeline
+                  detail={detail}
+                  allowAssistantEditing={advancedAssistantEditing}
+                  editingDisabled={running || Boolean(externalRuntime?.active)}
+                  mutating={transcriptMutating}
+                  onEdit={saveTranscriptEdit}
+                />
+              )}
               <RuntimeTimeline
                 items={runtimeTimeline}
                 onPermissionDecision={(requestId, decision, message) =>
@@ -527,6 +653,15 @@ export default function Home() {
             )}
           </div>
         </div>
+
+        {showSnapshots && activeKey && (
+          <SnapshotPanel
+            snapshots={snapshots}
+            mutating={transcriptMutating || running || Boolean(externalRuntime?.active)}
+            onClose={() => setShowSnapshots(false)}
+            onRestore={(snapshot) => void restoreSnapshot(snapshot)}
+          />
+        )}
       </section>
     </main>
   );

@@ -11,6 +11,7 @@ mod projects;
 mod updater;
 mod wsl;
 mod models;
+mod transcript;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -20,6 +21,7 @@ use tauri::{
 
 use pi_bridge::PiProc;
 use claude::{RuntimeRegistry, SessionCatalog};
+use transcript::editor::TranscriptEditor;
 
 /// Keep the main window fully inside the current monitor's work area: shrink it
 /// if it is larger than the work area, then clamp its position. Without this,
@@ -193,6 +195,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(PiProc::default())
         .manage(RuntimeRegistry::default())
+        .manage(TranscriptEditor::default())
         .manage(SessionCatalog::default())
         .manage(chat_store::ChatDb::default())
         .invoke_handler(tauri::generate_handler![
@@ -212,6 +215,9 @@ pub fn run() {
             claude::runtime_registry::runtime_permission_decide,
             claude::runtime_registry::runtime_get,
             claude::runtime_registry::runtime_list,
+            transcript::editor::transcript_edit,
+            transcript::editor::transcript_snapshots_list,
+            transcript::editor::transcript_snapshot_restore,
             claude::runtime_registry::runtime_probe_external,
             pi_bridge::pi_start,
             pi_bridge::pi_send,

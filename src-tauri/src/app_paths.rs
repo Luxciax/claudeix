@@ -40,6 +40,14 @@ pub fn claude_projects_dir() -> Result<PathBuf, String> {
     Ok(claude_config_dir()?.join("projects"))
 }
 
+pub fn claudeix_data_dir() -> Result<PathBuf, String> {
+    Ok(home_dir()?.join(".claudeix"))
+}
+
+pub fn claudeix_backups_dir() -> Result<PathBuf, String> {
+    Ok(claudeix_data_dir()?.join("backups"))
+}
+
 pub fn canonical_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
