@@ -14,24 +14,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "tray-icon", "image"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image"] }
 tauri-plugin-dialog = "2"
-tauri-plugin-notification = "2"
-tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
-base64 = "0.22"
 dirs = "5"
 sha2 = "0.10"
 sysinfo = "0.30"
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
-# model-list fetch (rustls-tls avoids system OpenSSL on Linux builds)
-# pinned to a 1.71-compatible patch so it still builds on the 1.77.x toolchain
-# `tokio` is not a reqwest feature (it is always a dependency since 0.12), so it
-# must not be listed here or resolution fails on newer cargo.
-reqwest = { version = "=0.12.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [profile.release]
 codegen-units = 1

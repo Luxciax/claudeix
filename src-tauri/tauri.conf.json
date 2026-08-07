@@ -29,14 +29,7 @@
       }
     ],
     "security": {
-      "csp": null,
-      "assetProtocol": {
-        "enable": true,
-        "scope": {
-          "allow": ["$APPLOCALDATA/pets/**"],
-          "deny": []
-        }
-      }
+      "csp": null
     }
   },
   "bundle": {
@@ -50,13 +43,5 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI3MkY0RDcxRTU4NTE4NkUKUldSdUdJWGxjVTB2dDJpUU9hUEcreG9zdmIzSnZpOFAvMU11U0Z2U2xKWTlIa25lR1hwTHd4WG0K",
-      "endpoints": [
-        "https://github.com/Luxciax/claudeix/releases/latest/download/latest.json"
-      ]
-    }
   }
 }
