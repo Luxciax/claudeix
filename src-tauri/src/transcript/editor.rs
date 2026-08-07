@@ -1,14 +1,19 @@
-use crate::app_paths::{claudeix_backups_dir, display_path, normalize_path_key};
+use crate::app_paths::{
+    canonical_or_original, claudeix_backups_dir, claudeix_database_path, display_path,
+    normalize_path_key,
+};
 use crate::claude::parser::parse_session_file;
 use crate::claude::runtime_registry::RuntimeRegistry;
 use crate::claude::scanner::{load_session, SessionCatalog};
 use crate::models::edit::{
-    BackupSnapshot, TranscriptEditRequest, TranscriptEditResult, TranscriptRestoreRequest,
+    BackupSnapshot, EditRecoveryItem, EditRecoveryResolveRequest, EditRecoveryResolveResult,
+    TranscriptAuditEntry, TranscriptEditRequest, TranscriptEditResult, TranscriptRestoreRequest,
     TranscriptRestoreResult,
 };
 use crate::models::session::{SessionDetail, SessionIdentity};
 use crate::models::transcript::EditTarget;
 use crate::trash::service::TrashService;
+use crate::transcript::audit::{self, EditTransactionRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -450,10 +455,282 @@ fn ensure_editable_runtime_state(
     Ok(())
 }
 
+fn rollback_to_snapshot(
+    identity: &SessionIdentity,
+    snapshot: &BackupSnapshot,
+) -> Result<SessionDetail, String> {
+    let backup_path = PathBuf::from(&snapshot.backup_path);
+    let backup_bytes = fs::read(&backup_path)
+        .map_err(|error| format!("cannot read rollback snapshot {}: {error}", backup_path.display()))?;
+    if sha256(&backup_bytes) != snapshot.source_hash {
+        return Err("rollback snapshot hash mismatch".to_string());
+    }
+    let temp = temp_path_for(&identity.source_path)?;
+    write_file_synced(&temp, &backup_bytes, true)?;
+    validate_candidate(&temp, identity)?;
+    atomic_replace(&temp, &identity.source_path)?;
+    validate_detail(identity)
+}
+
+fn new_transaction_record(
+    identity: &SessionIdentity,
+    operation: &str,
+    source_hash_before: String,
+    source_hash_after: String,
+    target: Option<EditTarget>,
+    old_content: Option<String>,
+    new_content: Option<String>,
+) -> EditTransactionRecord {
+    let timestamp = now_millis();
+    EditTransactionRecord {
+        id: format!("{operation}-{}", unique_id()),
+        session_id: identity.session_id.clone(),
+        source_path: display_path(&identity.source_path),
+        operation: operation.to_string(),
+        status: "prepared".to_string(),
+        source_hash_before,
+        source_hash_after,
+        backup_path: None,
+        target,
+        old_content,
+        new_content,
+        created_at: timestamp,
+        updated_at: timestamp,
+        error: None,
+    }
+}
+
+fn recovery_config_dir(source_path: &Path) -> Result<PathBuf, String> {
+    for ancestor in source_path.ancestors() {
+        let is_projects = ancestor
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case("projects"))
+            .unwrap_or(false);
+        if is_projects {
+            return ancestor
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| "Claude projects directory has no config parent".to_string());
+        }
+    }
+    Err(format!(
+        "cannot locate Claude config directory from transcript path {}",
+        source_path.display()
+    ))
+}
+
+fn recovery_identity(transaction: &EditTransactionRecord) -> Result<SessionIdentity, String> {
+    let source_path = PathBuf::from(&transaction.source_path);
+    let config_dir = recovery_config_dir(&source_path)?;
+    let candidates = transaction
+        .backup_path
+        .as_ref()
+        .map(PathBuf::from)
+        .into_iter()
+        .chain(std::iter::once(source_path.clone()));
+    let mut last_error = None;
+    for candidate in candidates {
+        if !candidate.is_file() {
+            continue;
+        }
+        match parse_session_file(&candidate, &config_dir, None) {
+            Ok(detail) if detail.summary.session_id == transaction.session_id => {
+                return Ok(SessionIdentity {
+                    config_dir: canonical_or_original(&config_dir),
+                    workspace_root: PathBuf::from(detail.summary.workspace_root),
+                    session_id: transaction.session_id.clone(),
+                    source_path: canonical_or_original(&source_path),
+                });
+            }
+            Ok(_) => {
+                last_error = Some("recovery transcript session id mismatch".to_string());
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        "cannot derive a valid Claude session identity for recovery".to_string()
+    }))
+}
+
+fn file_hash_if_present(path: &Path) -> Result<Option<String>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    fs::read(path)
+        .map(|bytes| Some(sha256(&bytes)))
+        .map_err(|error| format!("cannot read {} during recovery: {error}", path.display()))
+}
+
+fn recovery_item(transaction: &EditTransactionRecord) -> Result<EditRecoveryItem, String> {
+    let source_path = PathBuf::from(&transaction.source_path);
+    let current_hash = file_hash_if_present(&source_path)?;
+    let backup_valid = transaction
+        .backup_path
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .map(|path| {
+            fs::read(&path)
+                .map(|bytes| sha256(&bytes) == transaction.source_hash_before)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    let detected_state = match current_hash.as_deref() {
+        None => "source_missing",
+        Some(hash) if hash == transaction.source_hash_before => "source_before",
+        Some(hash) if hash == transaction.source_hash_after => "source_after",
+        Some(_) => "source_unknown",
+    }
+    .to_string();
+    Ok(EditRecoveryItem {
+        transaction_id: transaction.id.clone(),
+        session_id: transaction.session_id.clone(),
+        source_path: transaction.source_path.clone(),
+        operation: transaction.operation.clone(),
+        status: transaction.status.clone(),
+        backup_path: transaction.backup_path.clone(),
+        source_hash_before: transaction.source_hash_before.clone(),
+        source_hash_after: transaction.source_hash_after.clone(),
+        created_at: transaction.created_at,
+        can_keep_current: detected_state == "source_after",
+        can_restore_backup: backup_valid,
+        detected_state,
+        backup_valid,
+    })
+}
+
+fn pending_recovery_items(database_path: &Path) -> Result<Vec<EditRecoveryItem>, String> {
+    let mut items = Vec::new();
+    for transaction in audit::pending(database_path)? {
+        let item = recovery_item(&transaction)?;
+        if item.detected_state == "source_before" {
+            audit::update_status(
+                database_path,
+                &transaction.id,
+                "rolled_back",
+                transaction.backup_path.as_deref(),
+                now_millis(),
+                Some("startup recovery detected the original pre-operation transcript"),
+            )?;
+            continue;
+        }
+        items.push(item);
+    }
+    Ok(items)
+}
+
+pub fn session_has_pending_recovery(identity: &SessionIdentity) -> Result<bool, String> {
+    let source_key = normalize_path_key(&identity.source_path);
+    Ok(pending_recovery_items(&claudeix_database_path()?)?
+        .into_iter()
+        .any(|item| {
+            item.session_id == identity.session_id
+                && normalize_path_key(Path::new(&item.source_path)) == source_key
+        }))
+}
+
+fn resolve_recovery(
+    database_path: &Path,
+    backup_root: &Path,
+    request: &EditRecoveryResolveRequest,
+) -> Result<EditRecoveryResolveResult, String> {
+    let mut transaction = audit::get(database_path, &request.transaction_id)?
+        .ok_or_else(|| "edit recovery transaction not found".to_string())?;
+    if matches!(
+        transaction.status.as_str(),
+        "committed" | "rolled_back" | "dismissed"
+    ) {
+        return Err("edit recovery transaction is already resolved".to_string());
+    }
+    let item = recovery_item(&transaction)?;
+    let identity = recovery_identity(&transaction)?;
+    match request.action.as_str() {
+        "keep_current" => {
+            if !item.can_keep_current {
+                return Err(
+                    "current transcript does not match the prepared post-operation hash"
+                        .to_string(),
+                );
+            }
+            let detail = validate_detail(&identity)?;
+            if detail.summary.session_id != transaction.session_id {
+                return Err("current transcript session id mismatch".to_string());
+            }
+            let backup_path = transaction
+                .backup_path
+                .as_deref()
+                .ok_or_else(|| "recovery transaction has no recorded backup path".to_string())?;
+            transaction.updated_at = now_millis();
+            audit::commit(database_path, &transaction, backup_path)?;
+            Ok(EditRecoveryResolveResult {
+                transaction_id: transaction.id,
+                status: "committed".to_string(),
+                source_path: display_path(&identity.source_path),
+            })
+        }
+        "restore_backup" => {
+            if !item.can_restore_backup {
+                return Err("the automatic pre-operation backup is unavailable or invalid".to_string());
+            }
+            let backup_path = PathBuf::from(
+                transaction
+                    .backup_path
+                    .as_ref()
+                    .ok_or_else(|| "recovery transaction has no backup path".to_string())?,
+            );
+            let backup_bytes = fs::read(&backup_path).map_err(|error| {
+                format!("cannot read recovery backup {}: {error}", backup_path.display())
+            })?;
+            if sha256(&backup_bytes) != transaction.source_hash_before {
+                return Err("recovery backup hash mismatch".to_string());
+            }
+            if identity.source_path.is_file() {
+                let current_bytes = fs::read(&identity.source_path).map_err(|error| {
+                    format!(
+                        "cannot read current transcript before recovery {}: {error}",
+                        identity.source_path.display()
+                    )
+                })?;
+                create_snapshot(
+                    backup_root,
+                    &identity,
+                    &current_bytes,
+                    "before_recovery",
+                    None,
+                    None,
+                    None,
+                )?;
+            }
+            let temp = temp_path_for(&identity.source_path)?;
+            write_file_synced(&temp, &backup_bytes, true)?;
+            validate_candidate(&temp, &identity)?;
+            atomic_replace(&temp, &identity.source_path)?;
+            validate_detail(&identity)?;
+            audit::update_status(
+                database_path,
+                &transaction.id,
+                "rolled_back",
+                Some(&display_path(&backup_path)),
+                now_millis(),
+                Some("resolved by startup recovery using the pre-operation backup"),
+            )?;
+            Ok(EditRecoveryResolveResult {
+                transaction_id: transaction.id,
+                status: "rolled_back".to_string(),
+                source_path: display_path(&identity.source_path),
+            })
+        }
+        _ => Err("recovery action must be keep_current or restore_backup".to_string()),
+    }
+}
+
 fn apply_edit(
     identity: &SessionIdentity,
     request: &TranscriptEditRequest,
     backup_root: &Path,
+    database_path: &Path,
 ) -> Result<TranscriptEditResult, String> {
     if request.new_text.len() > MAX_EDIT_BYTES {
         return Err("edited text exceeds the 4 MiB safety limit".to_string());
@@ -477,32 +754,144 @@ fn apply_edit(
         &request.new_text,
         request.allow_assistant_text,
     )?;
-    let snapshot = create_snapshot(
-        backup_root,
+    let mut transaction = new_transaction_record(
         identity,
-        &source_bytes,
-        "before_edit",
+        "edit",
+        sha256(&source_bytes),
+        sha256(&edited_bytes),
         Some(request.target.clone()),
-        Some(sha256(old_text.as_bytes())),
-        Some(sha256(request.new_text.as_bytes())),
-    )?;
+        Some(old_text.clone()),
+        Some(request.new_text.clone()),
+    );
+    audit::begin(database_path, &transaction)?;
 
-    let temp = temp_path_for(&identity.source_path)?;
-    write_file_synced(&temp, &edited_bytes, true)?;
-    validate_candidate(&temp, identity)?;
-    let recheck = validate_detail(identity)?;
-    if recheck.file_fingerprint != request.expected_file_fingerprint {
-        return Err("session changed while the edit was being prepared; source file was not replaced".to_string());
+    let mut rollback_snapshot: Option<BackupSnapshot> = None;
+    let mut source_replaced = false;
+    let result = (|| -> Result<TranscriptEditResult, String> {
+        let snapshot = create_snapshot(
+            backup_root,
+            identity,
+            &source_bytes,
+            "before_edit",
+            Some(request.target.clone()),
+            Some(sha256(old_text.as_bytes())),
+            Some(sha256(request.new_text.as_bytes())),
+        )?;
+        rollback_snapshot = Some(snapshot.clone());
+        transaction.backup_path = Some(snapshot.backup_path.clone());
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "backed_up",
+            Some(&snapshot.backup_path),
+            transaction.updated_at,
+            None,
+        )?;
+
+        let temp = temp_path_for(&identity.source_path)?;
+        write_file_synced(&temp, &edited_bytes, true)?;
+        validate_candidate(&temp, identity)?;
+        let recheck = validate_detail(identity)?;
+        if recheck.file_fingerprint != request.expected_file_fingerprint {
+            return Err(
+                "session changed while the edit was being prepared; source file was not replaced"
+                    .to_string(),
+            );
+        }
+        atomic_replace(&temp, &identity.source_path)?;
+        source_replaced = true;
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "replaced",
+            None,
+            transaction.updated_at,
+            None,
+        )?;
+
+        let detail = validate_detail(identity)?;
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "verified",
+            None,
+            transaction.updated_at,
+            None,
+        )?;
+        audit::commit(database_path, &transaction, &snapshot.backup_path)?;
+        Ok(TranscriptEditResult { detail, snapshot })
+    })();
+
+    match result {
+        Ok(result) => Ok(result),
+        Err(error) if source_replaced => {
+            let Some(snapshot) = rollback_snapshot.as_ref() else {
+                let _ = audit::update_status(
+                    database_path,
+                    &transaction.id,
+                    "replaced",
+                    None,
+                    now_millis(),
+                    Some(&error),
+                );
+                return Err(format!(
+                    "edit failed after replacing the transcript and no rollback snapshot is available: {error}"
+                ));
+            };
+            match rollback_to_snapshot(identity, snapshot) {
+                Ok(_) => {
+                    let _ = audit::update_status(
+                        database_path,
+                        &transaction.id,
+                        "rolled_back",
+                        Some(&snapshot.backup_path),
+                        now_millis(),
+                        Some(&error),
+                    );
+                    Err(format!(
+                        "edit failed, but Claudeix restored the original transcript from the automatic snapshot: {error}"
+                    ))
+                }
+                Err(rollback_error) => {
+                    let combined = format!(
+                        "edit failed after replacing the transcript: {error}; automatic rollback also failed: {rollback_error}"
+                    );
+                    let _ = audit::update_status(
+                        database_path,
+                        &transaction.id,
+                        "replaced",
+                        Some(&snapshot.backup_path),
+                        now_millis(),
+                        Some(&combined),
+                    );
+                    Err(combined)
+                }
+            }
+        }
+        Err(error) => {
+            let _ = audit::update_status(
+                database_path,
+                &transaction.id,
+                "rolled_back",
+                rollback_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.backup_path.as_str()),
+                now_millis(),
+                Some(&error),
+            );
+            Err(error)
+        }
     }
-    atomic_replace(&temp, &identity.source_path)?;
-    let detail = validate_detail(identity)?;
-    Ok(TranscriptEditResult { detail, snapshot })
 }
 
 fn restore_snapshot(
     identity: &SessionIdentity,
     request: &TranscriptRestoreRequest,
     backup_root: &Path,
+    database_path: &Path,
 ) -> Result<TranscriptRestoreResult, String> {
     if !source_is_inside_projects(identity) {
         return Err("session source path is outside the Claude projects directory".to_string());
@@ -539,26 +928,142 @@ fn restore_snapshot(
             identity.source_path.display()
         )
     })?;
-    let current_snapshot = create_snapshot(
-        backup_root,
+    let mut transaction = new_transaction_record(
         identity,
-        &current_bytes,
-        "before_restore",
+        "snapshot_restore",
+        sha256(&current_bytes),
+        sha256(&backup_bytes),
         None,
         None,
         None,
-    )?;
-    let recheck = validate_detail(identity)?;
-    if recheck.file_fingerprint != request.expected_file_fingerprint {
-        return Err("session changed while restore was being prepared; source file was not replaced".to_string());
+    );
+    audit::begin(database_path, &transaction)?;
+
+    let mut rollback_snapshot: Option<BackupSnapshot> = None;
+    let mut source_replaced = false;
+    let result = (|| -> Result<TranscriptRestoreResult, String> {
+        let current_snapshot = create_snapshot(
+            backup_root,
+            identity,
+            &current_bytes,
+            "before_restore",
+            None,
+            None,
+            None,
+        )?;
+        rollback_snapshot = Some(current_snapshot.clone());
+        transaction.backup_path = Some(current_snapshot.backup_path.clone());
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "backed_up",
+            Some(&current_snapshot.backup_path),
+            transaction.updated_at,
+            None,
+        )?;
+
+        let recheck = validate_detail(identity)?;
+        if recheck.file_fingerprint != request.expected_file_fingerprint {
+            return Err(
+                "session changed while restore was being prepared; source file was not replaced"
+                    .to_string(),
+            );
+        }
+        atomic_replace(&validation_temp, &identity.source_path)?;
+        source_replaced = true;
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "replaced",
+            None,
+            transaction.updated_at,
+            None,
+        )?;
+
+        let detail = validate_detail(identity)?;
+        transaction.updated_at = now_millis();
+        audit::update_status(
+            database_path,
+            &transaction.id,
+            "verified",
+            None,
+            transaction.updated_at,
+            None,
+        )?;
+        audit::commit(
+            database_path,
+            &transaction,
+            &current_snapshot.backup_path,
+        )?;
+        Ok(TranscriptRestoreResult {
+            detail,
+            current_snapshot,
+            restored_snapshot_id: target.id,
+        })
+    })();
+
+    match result {
+        Ok(result) => Ok(result),
+        Err(error) if source_replaced => {
+            let Some(snapshot) = rollback_snapshot.as_ref() else {
+                let _ = audit::update_status(
+                    database_path,
+                    &transaction.id,
+                    "replaced",
+                    None,
+                    now_millis(),
+                    Some(&error),
+                );
+                return Err(format!(
+                    "snapshot restore failed after replacing the transcript and no rollback snapshot is available: {error}"
+                ));
+            };
+            match rollback_to_snapshot(identity, snapshot) {
+                Ok(_) => {
+                    let _ = audit::update_status(
+                        database_path,
+                        &transaction.id,
+                        "rolled_back",
+                        Some(&snapshot.backup_path),
+                        now_millis(),
+                        Some(&error),
+                    );
+                    Err(format!(
+                        "snapshot restore failed, but Claudeix restored the previous transcript from the automatic snapshot: {error}"
+                    ))
+                }
+                Err(rollback_error) => {
+                    let combined = format!(
+                        "snapshot restore failed after replacing the transcript: {error}; automatic rollback also failed: {rollback_error}"
+                    );
+                    let _ = audit::update_status(
+                        database_path,
+                        &transaction.id,
+                        "replaced",
+                        Some(&snapshot.backup_path),
+                        now_millis(),
+                        Some(&combined),
+                    );
+                    Err(combined)
+                }
+            }
+        }
+        Err(error) => {
+            let _ = audit::update_status(
+                database_path,
+                &transaction.id,
+                "rolled_back",
+                rollback_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.backup_path.as_str()),
+                now_millis(),
+                Some(&error),
+            );
+            Err(error)
+        }
     }
-    atomic_replace(&validation_temp, &identity.source_path)?;
-    let detail = validate_detail(identity)?;
-    Ok(TranscriptRestoreResult {
-        detail,
-        current_snapshot,
-        restored_snapshot_id: target.id,
-    })
 }
 
 #[tauri::command]
@@ -577,8 +1082,19 @@ pub fn transcript_edit(
         return Err("this Claude session started a recycle-bin transaction while the edit was being prepared".to_string());
     }
     let identity = identity_from_catalog(&catalog, &request.session_key)?;
+    if session_has_pending_recovery(&identity)? {
+        return Err(
+            "this Claude session has an unfinished edit/restore transaction; resolve recovery first"
+                .to_string(),
+        );
+    }
     ensure_editable_runtime_state(&runtime, &identity, &request.session_key)?;
-    apply_edit(&identity, &request, &claudeix_backups_dir()?)
+    apply_edit(
+        &identity,
+        &request,
+        &claudeix_backups_dir()?,
+        &claudeix_database_path()?,
+    )
 }
 
 #[tauri::command]
@@ -600,6 +1116,50 @@ pub fn transcript_snapshots_list(
 }
 
 #[tauri::command]
+pub fn transcript_audit_list(
+    catalog: State<'_, SessionCatalog>,
+    session_key: String,
+) -> Result<Vec<TranscriptAuditEntry>, String> {
+    let identity = identity_from_catalog(&catalog, &session_key)?;
+    audit::audit_for_session(
+        &claudeix_database_path()?,
+        &identity.session_id,
+        &display_path(&identity.source_path),
+    )
+}
+
+#[tauri::command]
+pub fn transcript_recovery_list() -> Result<Vec<EditRecoveryItem>, String> {
+    pending_recovery_items(&claudeix_database_path()?)
+}
+
+#[tauri::command]
+pub fn transcript_recovery_resolve(
+    editor: State<'_, TranscriptEditor>,
+    runtime: State<'_, RuntimeRegistry>,
+    trash: State<'_, TrashService>,
+    request: EditRecoveryResolveRequest,
+) -> Result<EditRecoveryResolveResult, String> {
+    let database = claudeix_database_path()?;
+    let transaction = audit::get(&database, &request.transaction_id)?
+        .ok_or_else(|| "edit recovery transaction not found".to_string())?;
+    let identity = recovery_identity(&transaction)?;
+    let session_key = identity.key();
+    if trash.is_locked(&session_key) {
+        return Err("this Claude session is currently being moved to the recycle bin".to_string());
+    }
+    let _lease = editor.acquire(&session_key)?;
+    if trash.is_locked(&session_key) {
+        return Err(
+            "this Claude session started a recycle-bin transaction while recovery was being prepared"
+                .to_string(),
+        );
+    }
+    ensure_editable_runtime_state(&runtime, &identity, &session_key)?;
+    resolve_recovery(&database, &claudeix_backups_dir()?, &request)
+}
+
+#[tauri::command]
 pub fn transcript_snapshot_restore(
     editor: State<'_, TranscriptEditor>,
     runtime: State<'_, RuntimeRegistry>,
@@ -615,8 +1175,19 @@ pub fn transcript_snapshot_restore(
         return Err("this Claude session started a recycle-bin transaction while restore was being prepared".to_string());
     }
     let identity = identity_from_catalog(&catalog, &request.session_key)?;
+    if session_has_pending_recovery(&identity)? {
+        return Err(
+            "this Claude session has an unfinished edit/restore transaction; resolve recovery first"
+                .to_string(),
+        );
+    }
     ensure_editable_runtime_state(&runtime, &identity, &request.session_key)?;
-    restore_snapshot(&identity, &request, &claudeix_backups_dir()?)
+    restore_snapshot(
+        &identity,
+        &request,
+        &claudeix_backups_dir()?,
+        &claudeix_database_path()?,
+    )
 }
 
 #[cfg(test)]
@@ -667,7 +1238,8 @@ mod tests {
     fn edits_original_file_and_restores_snapshot() {
         let (root, identity, request) = fixture();
         let backup_root = root.join("backups");
-        let result = apply_edit(&identity, &request, &backup_root).unwrap();
+        let database = root.join("claudeix.db");
+        let result = apply_edit(&identity, &request, &backup_root, &database).unwrap();
         assert_eq!(result.detail.records[0].visible_text(), "after");
         let source = fs::read_to_string(&identity.source_path).unwrap();
         assert!(source.contains("after"));
@@ -681,6 +1253,7 @@ mod tests {
                 expected_file_fingerprint: result.detail.file_fingerprint,
             },
             &backup_root,
+            &database,
         )
         .unwrap();
         assert_eq!(restore.detail.records[0].visible_text(), "before");
@@ -692,7 +1265,13 @@ mod tests {
         let (root, identity, mut request) = fixture();
         request.target.expected_record_hash = "stale".to_string();
         let before = fs::read(&identity.source_path).unwrap();
-        let error = apply_edit(&identity, &request, &root.join("backups")).unwrap_err();
+        let error = apply_edit(
+            &identity,
+            &request,
+            &root.join("backups"),
+            &root.join("claudeix.db"),
+        )
+        .unwrap_err();
         assert!(error.contains("target record changed"));
         assert_eq!(fs::read(&identity.source_path).unwrap(), before);
     }
@@ -703,17 +1282,135 @@ mod tests {
         let detail = load_session(&identity).unwrap();
         request.target = detail.records[1].editable_targets[0].clone();
         request.expected_file_fingerprint = detail.file_fingerprint;
-        let error = apply_edit(&identity, &request, &root.join("backups")).unwrap_err();
+        let database = root.join("claudeix.db");
+        let error = apply_edit(&identity, &request, &root.join("backups"), &database).unwrap_err();
         assert!(error.contains("not editable"));
 
         let detail = load_session(&identity).unwrap();
         request.expected_file_fingerprint = detail.file_fingerprint;
         request.allow_assistant_text = true;
         request.new_text = "edited reply".to_string();
-        let result = apply_edit(&identity, &request, &root.join("backups")).unwrap();
+        let result = apply_edit(&identity, &request, &root.join("backups"), &database).unwrap();
         assert_eq!(result.detail.records[1].visible_text(), "edited reply");
         let source = fs::read_to_string(&identity.source_path).unwrap();
         assert!(source.contains("edited reply"));
         assert!(source.contains("\"uuid\":\"assistant-1\""));
+    }
+
+    fn simulate_crash_after_replace(
+        root: &Path,
+        identity: &SessionIdentity,
+        request: &TranscriptEditRequest,
+    ) -> (PathBuf, EditTransactionRecord, BackupSnapshot, Vec<u8>, Vec<u8>) {
+        let backup_root = root.join("backups");
+        let database = root.join("claudeix.db");
+        let before = fs::read(&identity.source_path).unwrap();
+        let (after, old_text) = build_edited_bytes(
+            &before,
+            &request.target,
+            &request.new_text,
+            request.allow_assistant_text,
+        )
+        .unwrap();
+        let mut transaction = new_transaction_record(
+            identity,
+            "edit",
+            sha256(&before),
+            sha256(&after),
+            Some(request.target.clone()),
+            Some(old_text),
+            Some(request.new_text.clone()),
+        );
+        audit::begin(&database, &transaction).unwrap();
+        let snapshot = create_snapshot(
+            &backup_root,
+            identity,
+            &before,
+            "before_edit",
+            Some(request.target.clone()),
+            None,
+            None,
+        )
+        .unwrap();
+        transaction.backup_path = Some(snapshot.backup_path.clone());
+        audit::update_status(
+            &database,
+            &transaction.id,
+            "backed_up",
+            Some(&snapshot.backup_path),
+            now_millis(),
+            None,
+        )
+        .unwrap();
+        fs::write(&identity.source_path, &after).unwrap();
+        audit::update_status(
+            &database,
+            &transaction.id,
+            "replaced",
+            None,
+            now_millis(),
+            None,
+        )
+        .unwrap();
+        (database, transaction, snapshot, before, after)
+    }
+
+    #[test]
+    fn startup_recovery_can_keep_replaced_transcript_and_commit_audit() {
+        let (root, identity, request) = fixture();
+        let (database, transaction, _snapshot, _before, after) =
+            simulate_crash_after_replace(&root, &identity, &request);
+        let items = pending_recovery_items(&database).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].detected_state, "source_after");
+        assert!(items[0].can_keep_current);
+        assert!(items[0].can_restore_backup);
+
+        let result = resolve_recovery(
+            &database,
+            &root.join("backups"),
+            &EditRecoveryResolveRequest {
+                transaction_id: transaction.id.clone(),
+                action: "keep_current".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.status, "committed");
+        assert_eq!(fs::read(&identity.source_path).unwrap(), after);
+        assert!(pending_recovery_items(&database).unwrap().is_empty());
+        assert_eq!(
+            audit::audit_for_session(
+                &database,
+                &identity.session_id,
+                &display_path(&identity.source_path),
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn startup_recovery_can_restore_pre_operation_backup() {
+        let (root, identity, request) = fixture();
+        let (database, transaction, _snapshot, before, _after) =
+            simulate_crash_after_replace(&root, &identity, &request);
+        let result = resolve_recovery(
+            &database,
+            &root.join("backups"),
+            &EditRecoveryResolveRequest {
+                transaction_id: transaction.id,
+                action: "restore_backup".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.status, "rolled_back");
+        assert_eq!(fs::read(&identity.source_path).unwrap(), before);
+        assert!(pending_recovery_items(&database).unwrap().is_empty());
+        let manifest = load_manifest(&root.join("backups"), &identity.session_id).unwrap();
+        assert!(manifest
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.reason == "before_recovery"));
     }
 }

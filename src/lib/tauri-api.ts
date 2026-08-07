@@ -4,9 +4,12 @@ import type {
   BackupSnapshot,
   ClaudeConfig,
   ClaudeStatus,
+  EditRecoveryItem,
+  EditRecoveryResolveResult,
   EditTarget,
   SessionDetail,
   SessionSummary,
+  TranscriptAuditEntry,
   TranscriptEditResult,
   TranscriptRestoreResult,
 } from "@/features/sessions/types";
@@ -44,6 +47,14 @@ export const api = {
   }) => invoke<TranscriptEditResult>("transcript_edit", { request }),
   listTranscriptSnapshots: (sessionKey: string) =>
     invoke<BackupSnapshot[]>("transcript_snapshots_list", { sessionKey }),
+  listTranscriptAudit: (sessionKey: string) =>
+    invoke<TranscriptAuditEntry[]>("transcript_audit_list", { sessionKey }),
+  listTranscriptRecovery: () =>
+    invoke<EditRecoveryItem[]>("transcript_recovery_list"),
+  resolveTranscriptRecovery: (request: {
+    transactionId: string;
+    action: "keep_current" | "restore_backup";
+  }) => invoke<EditRecoveryResolveResult>("transcript_recovery_resolve", { request }),
   restoreTranscriptSnapshot: (request: {
     sessionKey: string;
     snapshotId: string;

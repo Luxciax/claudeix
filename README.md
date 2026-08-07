@@ -42,6 +42,11 @@ Claudeix 是一个面向 Claude Code 的轻量 Windows 桌面客户端。
 - Claude 可见回复提供默认关闭的高级编辑模式；
 - 每次编辑前自动保存完整 JSONL 快照；
 - 修改记录面板可恢复任意完整快照，恢复前再次备份当前版本；
+- 编辑与完整快照恢复使用 SQLite 持久化事务状态机：`prepared → backed_up → replaced → verified → committed`；
+- `~/.claudeix/claudeix.db` 使用 WAL + `synchronous=FULL` 保存事务和修改审计；
+- 普通失败如果已经覆盖原 JSONL，会立即自动恢复本次操作前快照；
+- 应用崩溃/断电留下未完成事务时，启动恢复向导可选择保留已修改版本或恢复操作前备份；
+- 有未完成写入事务的会话会被后端硬锁，禁止继续运行、编辑、恢复或删除；
 - 删除前展示全部待移动文件的完整路径、用途、单文件大小和总大小；
 - 主会话与 `<sessionId>/` 明确归属目录中的子代理/附件事务式移入 Claude 配置目录内回收站；
 - 未完成删除事务启动后自动回滚；原路径出现不同内容时转成可见 `recovery_conflict` 条目；
@@ -52,7 +57,6 @@ Claudeix 是一个面向 Claude Code 的轻量 Windows 桌面客户端。
 
 尚未完成：
 
-- 编辑事务持久化审计与启动故障恢复向导；
 - 会话重命名与归档；
 - Git worktree 并行会话；
 - 自动更新签名。

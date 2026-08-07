@@ -2,7 +2,7 @@
 
 import { RotateCcw, X } from "lucide-react";
 
-import type { BackupSnapshot } from "@/features/sessions/types";
+import type { BackupSnapshot, TranscriptAuditEntry } from "@/features/sessions/types";
 
 function formatTime(value: number): string {
   try {
@@ -20,11 +20,13 @@ function formatBytes(value: number): string {
 
 export function SnapshotPanel({
   snapshots,
+  auditEntries,
   mutating,
   onClose,
   onRestore,
 }: {
   snapshots: BackupSnapshot[];
+  auditEntries: TranscriptAuditEntry[];
   mutating: boolean;
   onClose: () => void;
   onRestore: (snapshot: BackupSnapshot) => void;
@@ -79,6 +81,67 @@ export function SnapshotPanel({
       </header>
 
       <div style={{ overflow: "auto", padding: 14 }}>
+        {auditEntries.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div
+              style={{
+                marginBottom: 7,
+                fontSize: 10,
+                fontWeight: 700,
+                color: "var(--text-tertiary)",
+                textTransform: "uppercase",
+              }}
+            >
+              已提交修改审计
+            </div>
+            <div style={{ display: "grid", gap: 7 }}>
+              {auditEntries.slice(0, 20).map((entry) => (
+                <details
+                  key={entry.transactionId}
+                  style={{
+                    padding: "9px 10px",
+                    border: "1px solid var(--separator)",
+                    borderRadius: 10,
+                    background: "var(--bg-elevated)",
+                  }}
+                >
+                  <summary style={{ cursor: "pointer", fontSize: 11 }}>
+                    {entry.operation === "snapshot_restore" ? "完整快照恢复" : "消息编辑"}
+                    {entry.lineIndex != null ? ` · JSONL 第 ${entry.lineIndex + 1} 行` : ""}
+                    <span style={{ marginLeft: 7, color: "var(--text-secondary)" }}>
+                      {formatTime(entry.createdAt)}
+                    </span>
+                  </summary>
+                  {(entry.oldContent != null || entry.newContent != null) && (
+                    <div style={{ marginTop: 8, display: "grid", gap: 7, fontSize: 10 }}>
+                      {entry.oldContent != null && (
+                        <pre style={{ margin: 0, whiteSpace: "pre-wrap", color: "var(--text-secondary)" }}>
+                          修改前：{entry.oldContent}
+                        </pre>
+                      )}
+                      {entry.newContent != null && (
+                        <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                          修改后：{entry.newContent}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                  <div
+                    title={entry.backupPath}
+                    style={{
+                      marginTop: 7,
+                      fontSize: 9,
+                      color: "var(--text-tertiary)",
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    备份：{entry.backupPath}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        )}
         {snapshots.length === 0 ? (
           <div
             style={{

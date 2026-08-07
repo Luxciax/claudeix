@@ -6,7 +6,7 @@ use crate::models::runtime::{
     RuntimeStartRequest, RuntimeStatus,
 };
 use crate::models::session::SessionIdentity;
-use crate::transcript::editor::TranscriptEditor;
+use crate::transcript::editor::{session_has_pending_recovery, TranscriptEditor};
 use crate::trash::service::TrashService;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
@@ -555,6 +555,12 @@ pub fn runtime_start(
             .get(session_key)
             .cloned()
             .ok_or_else(|| "session is not present in the current catalog".to_string())?;
+        if session_has_pending_recovery(&identity)? {
+            return Err(
+                "this Claude session has an unfinished edit/restore transaction; resolve recovery before running it"
+                    .to_string(),
+            );
+        }
         if normalized(&identity.workspace_root) != normalized(&workspace) {
             return Err("session workspace does not match the selected workspace".to_string());
         }

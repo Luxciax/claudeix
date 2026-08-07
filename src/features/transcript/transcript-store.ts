@@ -4,6 +4,7 @@ import type {
   BackupSnapshot,
   EditTarget,
   SessionDetail,
+  TranscriptAuditEntry,
   TranscriptEditResult,
   TranscriptRestoreResult,
 } from "@/features/sessions/types";
@@ -12,6 +13,7 @@ import { api } from "@/lib/tauri-api";
 type TranscriptState = {
   detail: SessionDetail | null;
   snapshots: BackupSnapshot[];
+  auditEntries: TranscriptAuditEntry[];
   loading: boolean;
   mutating: boolean;
   error: string | null;
@@ -19,6 +21,7 @@ type TranscriptState = {
   load: (sessionKey: string) => Promise<SessionDetail | null>;
   refresh: (sessionKey: string) => Promise<SessionDetail | null>;
   loadSnapshots: (sessionKey: string) => Promise<BackupSnapshot[]>;
+  loadAudit: (sessionKey: string) => Promise<TranscriptAuditEntry[]>;
   edit: (
     sessionKey: string,
     target: EditTarget,
@@ -37,6 +40,7 @@ type TranscriptState = {
 export const useTranscriptStore = create<TranscriptState>((set) => ({
   detail: null,
   snapshots: [],
+  auditEntries: [],
   loading: false,
   mutating: false,
   error: null,
@@ -67,6 +71,16 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       const snapshots = await api.listTranscriptSnapshots(sessionKey);
       set({ snapshots, mutationError: null });
       return snapshots;
+    } catch (error) {
+      set({ mutationError: String(error) });
+      return [];
+    }
+  },
+  loadAudit: async (sessionKey) => {
+    try {
+      const auditEntries = await api.listTranscriptAudit(sessionKey);
+      set({ auditEntries, mutationError: null });
+      return auditEntries;
     } catch (error) {
       set({ mutationError: String(error) });
       return [];
@@ -130,6 +144,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
     set({
       detail: null,
       snapshots: [],
+      auditEntries: [],
       loading: false,
       mutating: false,
       error: null,

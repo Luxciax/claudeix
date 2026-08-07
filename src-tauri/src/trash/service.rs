@@ -9,7 +9,7 @@ use crate::models::trash::{
     TrashMoveRequest, TrashPurgeFile, TrashPurgePreview, TrashPurgeRequest, TrashRestoreFileState,
     TrashRestorePreview, TrashRestoreRequest, TrashRestoreResult,
 };
-use crate::transcript::editor::TranscriptEditor;
+use crate::transcript::editor::{session_has_pending_recovery, TranscriptEditor};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -894,6 +894,12 @@ pub fn trash_delete_preview(
     session_key: String,
 ) -> Result<TrashDeletePreview, String> {
     let identity = identity_from_catalog(&catalog, &session_key)?;
+    if session_has_pending_recovery(&identity)? {
+        return Err(
+            "this Claude session has an unfinished edit/restore transaction; resolve recovery before deleting it"
+                .to_string(),
+        );
+    }
     let title = crate::claude::scanner::load_session(&identity)?.summary.title;
     build_delete_preview(&identity, &session_key, &title, &runtime)
 }
@@ -911,6 +917,12 @@ pub fn trash_move(
         return Err("finish the transcript edit or restore before recycling this session".to_string());
     }
     let identity = identity_from_catalog(&catalog, &request.session_key)?;
+    if session_has_pending_recovery(&identity)? {
+        return Err(
+            "this Claude session has an unfinished edit/restore transaction; resolve recovery before deleting it"
+                .to_string(),
+        );
+    }
     let title = crate::claude::scanner::load_session(&identity)?.summary.title;
     let summary = move_session_to_trash(
         &identity,

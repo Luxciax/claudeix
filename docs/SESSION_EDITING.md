@@ -1,5 +1,11 @@
 # Claudeix 会话内容编辑设计
 
+## 当前实现说明
+
+第一版的真实写回、完整快照和故障恢复闭环已经实现。编辑与完整快照恢复都会同时写入 `~/.claudeix/claudeix.db`：事务状态保存在 `edit_transactions`，成功提交的修改审计保存在 `transcript_edits`。SQLite 使用 WAL 与 `synchronous=FULL`。
+
+如果普通运行中的某一步在原 JSONL 已被替换后失败，Claudeix 会立刻使用本次操作前的完整快照做原子回滚。只有进程崩溃、断电等无法继续执行回滚的情况会留下 pending transaction；下一次启动必须先在恢复向导中处理，且该会话在此期间禁止运行、编辑、恢复和删除。
+
 ## 1. 目标
 
 允许用户修正 Claude Code 会话中的错误上下文，而不是重开会话，同时避免破坏 transcript 的 thinking 签名、工具关联和父子关系。

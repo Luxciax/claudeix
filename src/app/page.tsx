@@ -7,10 +7,16 @@ import { RuntimeTimeline } from "@/features/runtime/RuntimeTimeline";
 import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import type { ExternalRuntimeInfo } from "@/features/runtime/types";
 import { useSessionStore } from "@/features/sessions/session-store";
-import type { BackupSnapshot, ClaudeStatus, EditTarget } from "@/features/sessions/types";
+import type {
+  BackupSnapshot,
+  ClaudeStatus,
+  EditRecoveryItem,
+  EditTarget,
+} from "@/features/sessions/types";
 import { DeleteSessionDialog } from "@/features/trash/DeleteSessionDialog";
 import { TrashPanel } from "@/features/trash/TrashPanel";
 import type { TrashDeletePreview } from "@/features/trash/types";
+import { RecoveryDialog } from "@/features/transcript/RecoveryDialog";
 import { SnapshotPanel } from "@/features/transcript/SnapshotPanel";
 import { TranscriptTimeline } from "@/features/transcript/TranscriptTimeline";
 import { useTranscriptStore } from "@/features/transcript/transcript-store";
@@ -31,6 +37,9 @@ export default function Home() {
   const [deletePreview, setDeletePreview] = useState<TrashDeletePreview | null>(null);
   const [trashMutating, setTrashMutating] = useState(false);
   const [advancedAssistantEditing, setAdvancedAssistantEditing] = useState(false);
+  const [recoveryItems, setRecoveryItems] = useState<EditRecoveryItem[]>([]);
+  const [recoveryResolvingId, setRecoveryResolvingId] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
 
   const workspace = useSessionStore((state) => state.workspaceRoot);
   const sessions = useSessionStore((state) => state.sessions);
@@ -42,12 +51,14 @@ export default function Home() {
 
   const detail = useTranscriptStore((state) => state.detail);
   const snapshots = useTranscriptStore((state) => state.snapshots);
+  const auditEntries = useTranscriptStore((state) => state.auditEntries);
   const transcriptLoading = useTranscriptStore((state) => state.loading);
   const transcriptError = useTranscriptStore((state) => state.error);
   const transcriptMutating = useTranscriptStore((state) => state.mutating);
   const mutationError = useTranscriptStore((state) => state.mutationError);
   const loadTranscript = useTranscriptStore((state) => state.load);
   const loadSnapshots = useTranscriptStore((state) => state.loadSnapshots);
+  const loadAudit = useTranscriptStore((state) => state.loadAudit);
   const editTranscript = useTranscriptStore((state) => state.edit);
   const restoreTranscript = useTranscriptStore((state) => state.restore);
   const clearTranscript = useTranscriptStore((state) => state.clear);
@@ -93,7 +104,11 @@ export default function Home() {
     if (running) return;
     setActiveKey(sessionKey);
     resetRuntime();
-    await Promise.all([loadTranscript(sessionKey), loadSnapshots(sessionKey)]);
+    await Promise.all([
+      loadTranscript(sessionKey),
+      loadSnapshots(sessionKey),
+      loadAudit(sessionKey),
+    ]);
   };
 
   const newSession = () => {
@@ -111,6 +126,13 @@ export default function Home() {
     }
 
     void api.claudeStatus().then(setStatus);
+    void api
+      .listTranscriptRecovery()
+      .then((items) => {
+        setRecoveryItems(items);
+        setRecoveryError(null);
+      })
+      .catch((error) => setRecoveryError(`无法检查未完成会话事务：${String(error)}`));
     void api.workspaceRoot().then((root) => {
       void useSessionStore.getState().scan(root);
     });
@@ -224,6 +246,7 @@ export default function Home() {
       advancedAssistantEditing,
     );
     if (!result) return false;
+    await loadAudit(activeKey);
     if (workspace) await scanSessions(workspace, true);
     return true;
   };
@@ -240,8 +263,44 @@ export default function Home() {
       detail.fileFingerprint,
     );
     if (!result) return;
-    await loadSnapshots(activeKey);
+    await Promise.all([loadSnapshots(activeKey), loadAudit(activeKey)]);
     if (workspace) await scanSessions(workspace, true);
+  };
+
+  const resolveStartupRecovery = async (
+    item: EditRecoveryItem,
+    action: "keep_current" | "restore_backup",
+  ) => {
+    const description =
+      action === "keep_current"
+        ? "保留当前 JSONL，并将这次未完成事务正式提交到审计记录。"
+        : "用操作前的自动备份覆盖当前原始 JSONL。覆盖前如果当前文件存在，Claudeix 会先再保存一份恢复前快照。";
+    if (
+      !window.confirm(
+        `${description}\n\n会话：${item.sessionId}\n路径：${item.sourcePath}\n\n确认继续？`,
+      )
+    ) {
+      return;
+    }
+    setRecoveryResolvingId(item.transactionId);
+    setRecoveryError(null);
+    try {
+      await api.resolveTranscriptRecovery({ transactionId: item.transactionId, action });
+      const remaining = await api.listTranscriptRecovery();
+      setRecoveryItems(remaining);
+      if (workspace) await scanSessions(workspace, true);
+      if (activeKey) {
+        await Promise.all([
+          useTranscriptStore.getState().refresh(activeKey),
+          useTranscriptStore.getState().loadSnapshots(activeKey),
+          useTranscriptStore.getState().loadAudit(activeKey),
+        ]);
+      }
+    } catch (error) {
+      setRecoveryError(`事务恢复失败：${String(error)}`);
+    } finally {
+      setRecoveryResolvingId(null);
+    }
   };
 
   const previewSessionDelete = async () => {
@@ -513,7 +572,7 @@ export default function Home() {
                 onClick={() => {
                   setShowTrash(false);
                   setShowSnapshots((current) => !current);
-                  void loadSnapshots(activeKey);
+                  void Promise.all([loadSnapshots(activeKey), loadAudit(activeKey)]);
                 }}
                 disabled={running}
                 title="查看修改记录与完整快照"
@@ -739,6 +798,7 @@ export default function Home() {
         {showSnapshots && activeKey && (
           <SnapshotPanel
             snapshots={snapshots}
+            auditEntries={auditEntries}
             mutating={transcriptMutating || running || Boolean(externalRuntime?.active)}
             onClose={() => setShowSnapshots(false)}
             onRestore={(snapshot) => void restoreSnapshot(snapshot)}
@@ -759,6 +819,14 @@ export default function Home() {
           mutating={trashMutating}
           onCancel={() => setDeletePreview(null)}
           onConfirm={() => void confirmSessionDelete()}
+        />
+      )}
+      {(recoveryItems.length > 0 || recoveryError) && (
+        <RecoveryDialog
+          items={recoveryItems}
+          resolvingId={recoveryResolvingId}
+          error={recoveryError}
+          onResolve={(item, action) => void resolveStartupRecovery(item, action)}
         />
       )}
     </main>

@@ -28,7 +28,11 @@
 - 阶段 5 Trash Service：已完成；
 - 已实现删除预览指纹、主会话与明确归属子代理文件事务移动、崩溃回滚和可见恢复冲突；
 - 已实现回收站列表、SHA-256 恢复预览、安全恢复、交换恢复以及永久删除双重确认；
-- 下一实施批次为第一版发布前加固：编辑事务持久化审计、启动故障恢复、旧 Pi 模块脱钩和 Windows 发布构建。
+- 编辑事务持久化审计与启动故障恢复：已完成；
+- `~/.claudeix/claudeix.db` 使用 SQLite WAL + `synchronous=FULL` 保存 `edit_transactions` 和 `transcript_edits`；
+- 编辑/恢复事务已实现 `prepared → backed_up → replaced → verified → committed`，普通错误替换后自动回滚；
+- 崩溃残留事务启动时按源文件哈希识别，可保留当前修改或恢复操作前备份；pending recovery 会硬锁该会话所有写操作；
+- 下一实施批次为旧 Pi 模块脱钩和 Windows 第一版发布构建。
 
 ---
 

@@ -108,3 +108,42 @@ export type TranscriptRestoreResult = {
   currentSnapshot: BackupSnapshot;
   restoredSnapshotId: string;
 };
+
+export type TranscriptAuditEntry = {
+  id: number;
+  transactionId: string;
+  sessionId: string;
+  sourcePath: string;
+  operation: string;
+  lineIndex: number | null;
+  contentIndex: number | null;
+  fieldName: string | null;
+  oldContent: string | null;
+  newContent: string | null;
+  backupPath: string;
+  sourceHashBefore: string;
+  sourceHashAfter: string;
+  createdAt: number;
+};
+
+export type EditRecoveryItem = {
+  transactionId: string;
+  sessionId: string;
+  sourcePath: string;
+  operation: string;
+  status: string;
+  backupPath: string | null;
+  sourceHashBefore: string;
+  sourceHashAfter: string;
+  createdAt: number;
+  detectedState: string;
+  backupValid: boolean;
+  canKeepCurrent: boolean;
+  canRestoreBackup: boolean;
+};
+
+export type EditRecoveryResolveResult = {
+  transactionId: string;
+  status: string;
+  sourcePath: string;
+};
