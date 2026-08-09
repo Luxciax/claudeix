@@ -19,6 +19,7 @@ pub struct ClaudeStatus {
 
 fn command_for(executable: &ClaudeExecutable) -> Command {
     let mut command = Command::new(&executable.program);
+    crate::process_utils::hide_console(&mut command);
     command.args(&executable.prefix_args);
     command
 }
@@ -29,7 +30,9 @@ pub fn build_command() -> Result<Command, String> {
 
 #[cfg(windows)]
 pub fn locate() -> Result<ClaudeExecutable, String> {
-    let output = Command::new("where.exe")
+    let mut command = Command::new("where.exe");
+    crate::process_utils::hide_console(&mut command);
+    let output = command
         .arg("claude")
         .stdin(Stdio::null())
         .output()
@@ -116,7 +119,9 @@ fn find_windows_node(wrapper: &std::path::Path) -> Option<PathBuf> {
     if bundled.is_file() {
         return Some(bundled);
     }
-    let output = Command::new("where.exe")
+    let mut command = Command::new("where.exe");
+    crate::process_utils::hide_console(&mut command);
+    let output = command
         .arg("node.exe")
         .stdin(Stdio::null())
         .output()

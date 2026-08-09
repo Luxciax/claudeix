@@ -1,6 +1,6 @@
 [package]
 name = "claudeix"
-version = "0.1.0"
+version = "0.1.2"
 description = "Claude Code desktop session manager"
 authors = ["Luxciax"]
 edition = "2021"

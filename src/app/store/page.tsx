@@ -13,6 +13,7 @@ import { Button } from "@appica/ui-react/button";
 import { Badge } from "@appica/ui-react/badge";
 import { usePiSettings, packageSource } from "@/lib/pi/settings";
 import { useT } from "@/lib/i18n";
+import ClaudeStorePage from "@/features/pi-shell/ClaudeStorePage";
 import { SettingsPage, InsetGroup, GroupRow, Segmented } from "@/components/settings-ui";
 import { Skeleton } from "@/components/primitives";
 import { AlertTriangle, Package, Check } from "lucide-react";
@@ -50,7 +51,9 @@ const MOCK_RESULTS: StorePkg[] = [
   { name: "pi-mcp-adapter", version: "2.1.0", description: "Use MCP servers as pi tools", publisher: "community" },
 ];
 
-export default function StorePage() {
+export default ClaudeStorePage;
+
+function LegacyStorePage() {
   const settings = usePiSettings();
   const [all, setAll] = useState<StorePkg[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);

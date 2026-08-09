@@ -34,8 +34,11 @@ import { SnapshotPanel } from "@/features/transcript/SnapshotPanel";
 import { TranscriptTimeline } from "@/features/transcript/TranscriptTimeline";
 import { useTranscriptStore } from "@/features/transcript/transcript-store";
 import { api, isTauriRuntime } from "@/lib/tauri-api";
+import PiHome from "@/features/pi-shell/PiHome";
 
-export default function Home() {
+export default PiHome;
+
+function LegacyClaudeixHome() {
   const [status, setStatus] = useState<ClaudeStatus>({
     installed: false,
     version: "检测中…",

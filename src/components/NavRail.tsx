@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
@@ -12,9 +13,9 @@ import {
   Settings,
 } from "lucide-react";
 import { useUI } from "@/lib/store";
-import { usePi } from "@/lib/pi/store";
 import { useT, type MsgKey } from "@/lib/i18n";
-import { PiMark } from "@/components/PiMark";
+import { useRuntimeStore } from "@/features/runtime/runtime-store";
+import { api } from "@/lib/tauri-api";
 
 const ITEMS: { href: string; icon: React.ReactNode; labelKey: MsgKey }[] = [
   { href: "/", icon: <Sparkles size={17} />, labelKey: "nav.workspace" },
@@ -36,8 +37,13 @@ const STATUS_COLOR: Record<string, string> = {
 export function NavRail() {
   const pathname = usePathname();
   const zenMode = useUI((s) => s.zenMode);
-  const status = usePi((s) => s.status);
+  const runtime = useRuntimeStore((state) => state.snapshot);
+  const [installed, setInstalled] = useState(false);
   const t = useT();
+
+  useEffect(() => {
+    void api.claudeStatus().then((status) => setInstalled(status.installed)).catch(() => setInstalled(false));
+  }, []);
 
   if (zenMode) return null;
 
@@ -62,7 +68,23 @@ export function NavRail() {
       }}
       data-tauri-drag-region
     >
-      <PiMark size={30} withBackground style={{ marginBottom: 8 }} />
+      <div
+        title="Claudeix"
+        style={{
+          width: 30,
+          height: 30,
+          display: "grid",
+          placeItems: "center",
+          marginBottom: 8,
+          borderRadius: 9,
+          background: "var(--accent)",
+          color: "var(--text-on-accent)",
+          fontSize: 15,
+          fontWeight: 750,
+        }}
+      >
+        C
+      </div>
       {ITEMS.map((item) => {
         const active = isActive(item.href);
         return (
@@ -114,15 +136,28 @@ export function NavRail() {
 
       {/* connection dot pinned to the bottom */}
       <span
-        title={t("nav.piStatus", { status: t(`status.${status}`) })}
+        title={
+          runtime?.status === "running" || runtime?.status === "waiting_permission"
+            ? "Claude Code 正在运行"
+            : installed
+              ? "Claude Code 已就绪"
+              : "未检测到 Claude Code"
+        }
         style={{
           marginTop: "auto",
           width: 8,
           height: 8,
           borderRadius: 99,
-          background: STATUS_COLOR[status] ?? "var(--text-tertiary)",
+          background:
+            runtime?.status === "running" || runtime?.status === "waiting_permission"
+              ? STATUS_COLOR.running
+              : installed
+                ? STATUS_COLOR.ready
+                : STATUS_COLOR.disconnected,
           boxShadow:
-            status === "running" ? "0 0 0 4px var(--accent-muted)" : "none",
+            runtime?.status === "running" || runtime?.status === "waiting_permission"
+              ? "0 0 0 4px var(--accent-muted)"
+              : "none",
         }}
       />
     </nav>

@@ -511,7 +511,9 @@ fn write_json_line(stdin: &Arc<Mutex<ChildStdin>>, value: &serde_json::Value) ->
 fn terminate_owned_process(pid: u32, child: &Arc<Mutex<Child>>) -> Result<(), String> {
     #[cfg(windows)]
     {
-        let taskkill = std::process::Command::new("taskkill")
+        let mut command = std::process::Command::new("taskkill");
+        crate::process_utils::hide_console(&mut command);
+        let taskkill = command
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())

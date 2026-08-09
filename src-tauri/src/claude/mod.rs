@@ -5,6 +5,7 @@ pub mod locator;
 pub mod parser;
 pub mod runtime_registry;
 pub mod scanner;
+pub mod settings;
 
 pub use runtime_registry::RuntimeRegistry;
 pub use scanner::SessionCatalog;

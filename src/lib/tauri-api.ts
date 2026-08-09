@@ -27,9 +27,36 @@ export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export type ClaudeSettingsFile = {
+  path: string;
+  exists: boolean;
+  content: string;
+};
+
 export const api = {
   claudeStatus: () => invoke<ClaudeStatus>("claude_status"),
   claudeConfig: () => invoke<ClaudeConfig>("claude_config"),
+  readClaudeSettings: (scope: "global" | "project", workspaceRoot?: string | null) =>
+    invoke<ClaudeSettingsFile>("claude_settings_read", {
+      scope,
+      workspaceRoot: workspaceRoot ?? null,
+    }),
+  writeClaudeSettings: (
+    scope: "global" | "project",
+    content: string,
+    workspaceRoot?: string | null,
+  ) =>
+    invoke<ClaudeSettingsFile>("claude_settings_write", {
+      scope,
+      workspaceRoot: workspaceRoot ?? null,
+      content,
+    }),
+  listClaudePlugins: (available = false) =>
+    invoke<unknown>("claude_plugins_list", { available }),
+  runClaudePluginAction: (
+    action: "enable" | "disable" | "install" | "uninstall" | "update",
+    plugin: string,
+  ) => invoke<{ action: string; plugin: string; output: string }>("claude_plugin_action", { action, plugin }),
   workspaceRoot: () => invoke<string>("workspace_root"),
   pickWorkspace: () => invoke<string | null>("project_pick"),
   openWorkspace: (path: string) => invoke<string>("project_open", { path }),

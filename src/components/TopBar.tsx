@@ -82,7 +82,7 @@ export function TopBar() {
             color: "var(--text-primary)",
           }}
         >
-          Pi Desktop
+          Claudeix
         </span>
         <ProjectSwitcher />
       </div>

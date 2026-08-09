@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { Square, ArrowUp, X, Zap, ListPlus } from "lucide-react";
 import { ModelPicker } from "./ModelPicker";
@@ -27,6 +27,10 @@ interface ComposerInputProps {
   /** how ⌘⏎ delivers while a turn is running */
   delivery: DeliveryMode;
   onDeliveryChange: (mode: DeliveryMode) => void;
+  /** Override the legacy Pi model picker while retaining the same composer chrome. */
+  modelControl?: ReactNode;
+  /** Claudeix currently treats one runtime as one turn, so mid-turn delivery is disabled. */
+  allowMidTurnDelivery?: boolean;
 }
 
 /**
@@ -48,6 +52,8 @@ export function ComposerInput({
   queue,
   delivery,
   onDeliveryChange,
+  modelControl,
+  allowMidTurnDelivery = true,
 }: ComposerInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const t = useT();
@@ -273,7 +279,7 @@ export function ComposerInput({
             gap: 6,
           }}
         >
-          {(streaming || retrying) && (draft.trim() || attachments.length > 0) && (
+          {allowMidTurnDelivery && (streaming || retrying) && (draft.trim() || attachments.length > 0) && (
             <motion.button
               onClick={() => onSubmit()}
               whileTap={{ scale: 0.9 }}
@@ -379,8 +385,8 @@ export function ComposerInput({
             justifyContent: "space-between",
           }}
         >
-          <ModelPicker compact />
-          {streaming ? (
+          {modelControl ?? <ModelPicker compact />}
+          {streaming && allowMidTurnDelivery ? (
             <div
               title={t("composer.deliveryHint")}
               style={{

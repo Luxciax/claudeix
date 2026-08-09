@@ -18,6 +18,7 @@ import {
 } from "@/lib/update";
 import { useCliUpdate } from "@/lib/pi/cli-update";
 import { usePi } from "@/lib/pi/store";
+import ClaudeUpdatePage from "@/features/pi-shell/ClaudeUpdatePage";
 import { useWorkspace } from "@/lib/workspace";
 import { useI18n, useT } from "@/lib/i18n";
 import { PiMark } from "@/components/PiMark";
@@ -98,7 +99,9 @@ const mono: React.CSSProperties = {
   fontFamily: "var(--font-mono, monospace)",
 };
 
-export default function UpdatePage() {
+export default ClaudeUpdatePage;
+
+function LegacyUpdatePage() {
   const u = useUpdate();
   const cli = useCliUpdate();
   const t = useT();

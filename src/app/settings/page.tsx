@@ -25,6 +25,7 @@ import {
   Bell,
 } from "lucide-react";
 import { APP_VERSION } from "@/lib/update";
+import ClaudeSettingsPage from "@/features/pi-shell/ClaudeSettingsPage";
 import { usePiSettings, type SettingsScope, type PiSettings } from "@/lib/pi/settings";
 import { usePi, THINKING_LEVELS } from "@/lib/pi/store";
 import { useRuntime } from "@/lib/pi/runtime";
@@ -87,7 +88,9 @@ function getPath(obj: PiSettings, path: string): unknown {
 /** display labels for the UI text-scale steps (locale-neutral) */
 const FONT_SCALE_LABELS = FONT_SCALES.map((s) => `${Math.round(s * 100)}%`);
 
-export default function PiSettingsPage() {
+export default ClaudeSettingsPage;
+
+function LegacyPiSettingsPage() {
   const s = usePiSettings();
   const { currentModel } = usePi();
   const [scope, setScope] = useState<SettingsScope>("global");

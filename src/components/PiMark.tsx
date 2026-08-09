@@ -1,22 +1,30 @@
 import type { CSSProperties } from "react";
 
-/** Shared π glyph paths — single source of truth for the brand mark. */
+/** Claudeix C+X glyph. Keep this component name so the Pi Desktop shell can
+ * retain its original layout/import graph while the branding is replaced. */
 const GLYPH = (
-  <g
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={84}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M236 414 C284 352 372 356 512 354 C640 352 724 350 790 362" />
-    <path d="M412 362 C402 470 392 572 368 662 C360 692 348 706 330 712" />
-    <path d="M636 360 C630 470 628 580 646 654 C658 700 700 718 736 690 C748 680 754 668 756 654" />
-  </g>
+  <>
+    <path
+      d="M708 314 C654 248 574 216 482 216 C306 216 198 340 198 512 C198 684 306 808 482 808 C574 808 654 776 708 710"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={96}
+      strokeLinecap="round"
+    />
+    <g
+      fill="none"
+      stroke="var(--accent, #7c83ff)"
+      strokeWidth={74}
+      strokeLinecap="round"
+    >
+      <path d="M674 430 L826 594" />
+      <path d="M826 430 L674 594" />
+    </g>
+  </>
 );
 
 /**
- * Global brand mark: the hand-drawn π.
+ * Global Claudeix brand mark, rendered inside the original Pi Desktop shell.
  *
  * - Default: monochrome glyph inheriting `currentColor` — for nav rails,
  *   status bars, and any inline small-size use.
@@ -26,7 +34,7 @@ export function PiMark({
   size = 20,
   withBackground = false,
   style,
-  title = "Pi",
+  title = "Claudeix",
 }: {
   size?: number;
   withBackground?: boolean;
@@ -43,9 +51,9 @@ export function PiMark({
       style={style}
     >
       {withBackground && (
-        <rect width={1024} height={1024} rx={230} fill="#eadfc9" />
+        <rect width={1024} height={1024} rx={224} fill="#181b22" />
       )}
-      <g color={withBackground ? "#2b241d" : undefined}>{GLYPH}</g>
+      <g color={withBackground ? "#f7f8fb" : undefined}>{GLYPH}</g>
     </svg>
   );
 }

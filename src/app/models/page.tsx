@@ -24,6 +24,7 @@ import { ModelIcon } from "@/components/icons";
 import { resolveModelMetaOrFallback } from "@/lib/model-icon";
 import { useT } from "@/lib/i18n";
 import { isTauri } from "@/lib/pi/client";
+import ClaudeModelsPage from "@/features/pi-shell/ClaudeModelsPage";
 import { usePi } from "@/lib/pi/store";
 import { usePiSettings } from "@/lib/pi/settings";
 import {
@@ -47,7 +48,9 @@ async function confirmRemoval(message: string): Promise<boolean> {
   return confirm(message);
 }
 
-export default function ModelsPage() {
+export default ClaudeModelsPage;
+
+function LegacyModelsPage() {
   const t = useT();
 
   const piStatus = usePi((s) => s.status);

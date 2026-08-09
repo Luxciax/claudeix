@@ -1,7 +1,13 @@
 import { useUI } from "./store";
 import { isTauri } from "./pi/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { exit } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
+
+let nativeQuitInProgress = false;
+
+export function isNativeQuitInProgress() {
+  return nativeQuitInProgress;
+}
 
 /** Hide the main window into the system tray (used by the "minimize" behavior). */
 export async function minimizeToTray() {
@@ -33,11 +39,17 @@ export async function restoreFromTray() {
 /** Fully quit the application (used by the "quit" behavior). */
 export async function quitApp() {
   if (isTauri()) {
+    if (nativeQuitInProgress) return;
+    nativeQuitInProgress = true;
     try {
-      await exit(0);
-    } catch {
-      // fall back to a hard close if the plugin is unavailable
-      window.close();
+      await invoke("app_quit");
+    } catch (error) {
+      nativeQuitInProgress = false;
+      console.error("[window-close] native quit failed:", error);
+      // Calling window.close() here would recurse into onCloseRequested, which
+      // intentionally prevents the native close. Keep the app alive and show
+      // the close dialog again instead of leaving a blank WebView behind.
+      useUI.getState().setCloseDialogOpen(true);
     }
   } else {
     window.close();

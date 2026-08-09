@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "streamdown/styles.css";
+import { AppShell } from "@/components/AppShell";
 import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
 
 export const metadata: Metadata = {
@@ -28,7 +29,9 @@ export default function RootLayout({
     <html lang="en" data-theme="dark" className="dark" suppressHydrationWarning>
       <body>
         {/* app-level last resort — Next's global-error breaks output:"export" */}
-        <GlobalErrorBoundary>{children}</GlobalErrorBoundary>
+        <GlobalErrorBoundary>
+          <AppShell>{children}</AppShell>
+        </GlobalErrorBoundary>
       </body>
     </html>
   );

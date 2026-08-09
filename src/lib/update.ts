@@ -2,21 +2,17 @@
 
 /**
  * Software-update state.
- * The desktop app uses the built-in Tauri updater (`@tauri-apps/plugin-updater`)
- * for self-update: `check()` compares the running version against the GitHub
- * release `latest.json`, and `apply()` downloads + installs + relaunches.
- * The Pi CLI update is handled separately by `useCliUpdate` (Rust `pi_cli_update_check`).
+ * Claudeix delegates update checks to Rust (`update_check`), which reads semver
+ * tags from the Claudeix GitHub repository. Automatic binary replacement is
+ * deliberately disabled until the signed release pipeline is wired up.
  * In the browser preview the store runs a mock so the page is explorable.
  */
 
 import { create } from "zustand";
 import { isTauri } from "./pi/client";
-import { getVersion } from "@tauri-apps/api/app";
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 
 import pkg from "../../package.json";
-const REPO_URL = "https://github.com/MarshallEriksen-Neura/pi-agent-desktop";
+const REPO_URL = "https://github.com/Luxciax/claudeix";
 
 /** Version from package.json — kept in sync automatically. */
 export const APP_VERSION = pkg.version;
@@ -84,16 +80,8 @@ export const useUpdate = create<UpdateState>((set, get) => ({
         await delay(900);
         info = MOCK_INFO;
       } else {
-        const currentVersion = await getVersion();
-        const update = await check();
-        info = {
-          configured: true,
-          repoUrl: REPO_URL,
-          currentVersion,
-          latestVersion: update ? update.version : currentVersion,
-          latestCommit: null,
-          updateAvailable: update != null,
-        };
+        const { invoke } = await import("@tauri-apps/api/core");
+        info = await invoke<UpdateInfo>("update_check");
       }
       set({
         info,
@@ -117,13 +105,8 @@ export const useUpdate = create<UpdateState>((set, get) => ({
         await delay(1600);
         throw new Error(MOCK_APPLY_ERROR);
       }
-      const update = await check();
-      if (!update) {
-        set({ phase: "upToDate" });
-        return;
-      }
-      await update.downloadAndInstall();
-      await relaunch();
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke<void>("update_apply");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       set({ phase: "available", error: msg });

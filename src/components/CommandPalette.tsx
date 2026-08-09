@@ -16,18 +16,16 @@ import {
   Moon,
   SquareTerminal,
   SquarePen,
-  Gem,
   RefreshCw,
   Languages,
   Folder,
   FolderOpen,
-  Command as CommandIcon,
   Command,
 } from "lucide-react";
 import { useUI } from "@/lib/store";
-import { usePi } from "@/lib/pi/store";
-import { useChat } from "@/lib/pi/chat";
-import { useSessions } from "@/lib/pi/sessions";
+import { useSessionStore } from "@/features/sessions/session-store";
+import { useTranscriptStore } from "@/features/transcript/transcript-store";
+import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import { useWorkspace } from "@/lib/workspace";
 import { useI18n, useT } from "@/lib/i18n";
 import { Kbd } from "./primitives";
@@ -95,9 +93,6 @@ export function CommandPalette() {
 
 function PaletteBody() {
   const { setCommandPalette, toggleZen, toggleTheme, toggleTerminal } = useUI();
-  const cycleModel = usePi((s) => s.cycleModel);
-  const piCommands = usePi((s) => s.commands);
-  const refresh = usePi((s) => s.refresh);
   const toggleLocale = useI18n((s) => s.toggleLocale);
   const wsMock = useWorkspace((s) => s.mock);
   const wsRoot = useWorkspace((s) => s.root);
@@ -124,7 +119,9 @@ function PaletteBody() {
         hint: "chat",
         run: () => {
           close();
-          useSessions.getState().newSession();
+          useSessionStore.getState().setActiveKey(null);
+          useTranscriptStore.getState().clear();
+          useRuntimeStore.getState().reset();
         },
       },
       {
@@ -157,15 +154,6 @@ function PaletteBody() {
         },
       },
       {
-        id: "model",
-        icon: <Gem size={15} />,
-        label: t("palette.cycleModel"),
-        run: () => {
-          close();
-          cycleModel();
-        },
-      },
-      {
         id: "language",
         icon: <Languages size={15} />,
         label: t("palette.language"),
@@ -177,11 +165,12 @@ function PaletteBody() {
       {
         id: "reindex",
         icon: <RefreshCw size={15} />,
-        label: t("palette.refresh"),
-        hint: "rpc",
+        label: "刷新 Claude 会话",
+        hint: "jsonl",
         run: () => {
           close();
-          refresh();
+          const root = useWorkspace.getState().root;
+          if (root) void useSessionStore.getState().scan(root, true);
         },
       },
     ];
@@ -211,19 +200,8 @@ function PaletteBody() {
               },
             })),
         ];
-    // pi slash-commands (built-ins + extensions) surface here too
-    const fromPi: Command[] = piCommands.map((c) => ({
-      id: `pi-${c.name}`,
-      icon: <CommandIcon size={15} />,
-      label: `/${c.name}`,
-      hint: c.source?.replace("extension:", "") ?? "pi",
-      run: () => {
-        setCommandPalette(false);
-        useChat.getState().send(`/${c.name}`);
-      },
-    }));
-    return [...base, ...fromProjects, ...fromPi];
-  }, [setCommandPalette, toggleZen, toggleTheme, toggleTerminal, cycleModel, refresh, piCommands, toggleLocale, wsMock, wsRoot, recents, t]);
+    return [...base, ...fromProjects];
+  }, [setCommandPalette, toggleZen, toggleTheme, toggleTerminal, toggleLocale, wsMock, wsRoot, recents, t]);
 
   return (
     <Autocomplete

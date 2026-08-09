@@ -49,16 +49,11 @@ fn semver_gt(a: &[u64], b: &[u64]) -> bool {
 /// `git ls-remote --tags <repo>` → (highest semver tag, its commit sha).
 fn latest_remote_tag(repo: &str) -> Result<Option<(String, String)>, String> {
     let mut cmd = Command::new("git");
+    crate::process_utils::hide_console(&mut cmd);
     cmd.args(["ls-remote", "--tags", repo])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
     let out = cmd
         .output()
         .map_err(|e| format!("failed to run git: {e}"))?;

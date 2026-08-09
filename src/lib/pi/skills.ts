@@ -1,23 +1,16 @@
 "use client";
 
 /**
- * Skill discovery — mirrors the directories the running pi loads skills from
+ * Skill discovery — mirrors the standard Claude Code skill directories
  * and parses each SKILL.md frontmatter (name, description).
  *
- * pi has no "list skills" RPC, so the desktop app scans via the Tauri fs
- * bridge, following pi's own resolution order:
- *   global : ~/.pi/agent/skills/<name>/SKILL.md
- *   project: <root>/.pi/skills/<name>/SKILL.md
- *   paths  : settings.json → skills[] — global entries resolve against
- *            ~/.pi/agent, project entries against <root>/.pi, ~ expands.
- * Glob and "!" exclude entries can't be expanded with fs_list_dir; they are
- * reported as `unscannable` so the UI can say the list may be partial.
+ *   global : ~/.claude/skills/<name>/SKILL.md
+ *   project: <root>/.claude/skills/<name>/SKILL.md
  * In browser preview everything runs on mock data.
  */
 
 import { create } from "zustand";
 import { isTauri } from "./client";
-import { usePiSettings } from "./settings";
 import { useWorkspace } from "../workspace";
 
 export type SkillOrigin = "global" | "project" | "path";
@@ -192,34 +185,16 @@ export const useSkills = create<SkillsStore>((set, get) => ({
     }
     set({ loading: true, error: null });
     try {
-      if (!usePiSettings.getState().loaded) await usePiSettings.getState().load();
-      const s = usePiSettings.getState();
-      const globalPath = norm(s.global.path); // …/.pi/agent/settings.json
-      const agentDir = globalPath.replace(/\/settings\.json$/, "");
-      const home = agentDir.replace(/\/\.pi\/agent$/, "");
       const rawRoot = useWorkspace.getState().root;
       const root = rawRoot ? norm(rawRoot) : null;
 
+      const config = await tauriInvoke<{ configDir: string }>("claude_config");
       const sources: { dir: string; origin: SkillOrigin }[] = [
-        { dir: `${agentDir}/skills`, origin: "global" },
+        { dir: `${norm(config.configDir)}/skills`, origin: "global" },
       ];
-      if (root) sources.push({ dir: `${root}/.pi/skills`, origin: "project" });
+      if (root) sources.push({ dir: `${root}/.claude/skills`, origin: "project" });
 
       const unscannable: string[] = [];
-      const addConfigured = (entries: string[] | undefined, base: string) => {
-        for (const raw of entries ?? []) {
-          if (raw.startsWith("!")) continue; // excludes only narrow other entries
-          if (/[*?[\]]/.test(raw)) {
-            unscannable.push(raw);
-            continue;
-          }
-          let p = norm(raw.replace(/^~(?=\/|$)/, home));
-          if (!/^([a-zA-Z]:)?\//.test(p)) p = `${base}/${p}`;
-          sources.push({ dir: p, origin: "path" });
-        }
-      };
-      addConfigured(s.global.data?.skills, agentDir);
-      if (root) addConfigured(s.project.data?.skills, `${root}/.pi`);
 
       const seen = new Set<string>();
       const unique = sources.filter((src) => {

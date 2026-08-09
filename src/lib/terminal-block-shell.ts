@@ -2,8 +2,7 @@
 
 import { useTerminalBlocks } from "@/lib/terminal-blocks";
 import { termBus } from "@/lib/terminal-bus";
-import { getPiClient } from "./pi/client";
-import type { BashResult } from "./pi/protocol";
+import { useWorkspace } from "./workspace";
 
 /**
  * Block-mode shell handler — each command becomes a card in the blocks view.
@@ -18,7 +17,6 @@ export function handleBlockInput(data: string) {
 
   // Ctrl-C: cancel the running block
   if (data === "\x03" && runningBlock) {
-    getPiClient().send({ type: "abort_bash" });
     return;
   }
 
@@ -52,7 +50,13 @@ export function blockPromptLine() {
   termBus.write("\x1b[2m$\x1b[0m ");
 }
 
-let bashSeq = 0;
+type TerminalCommandResult = {
+  output: string;
+  exitCode: number | null;
+  cancelled: boolean;
+  truncated: boolean;
+  fullOutputPath: string | null;
+};
 
 async function runBlockCommand(cmd: string) {
   const blocks = useTerminalBlocks.getState();
@@ -64,44 +68,20 @@ async function runBlockCommand(cmd: string) {
     startedAt: Date.now(),
   });
 
-  const client = getPiClient();
-  // Correlate the live output stream with this block: pi echoes the command's
-  // `id` back on every bash_execution_update, so a second command running in
-  // parallel cannot leak into this card.
-  const id = `blk-${++bashSeq}`;
-  let streamed = 0;
-  const off = client.on("bash_execution_update", (e) => {
-    if (e.type !== "bash_execution_update" || e.id !== id) return;
-    if (!e.delta) return;
-    streamed += e.delta.length;
-    useTerminalBlocks.getState().appendOutput(blockId, e.delta);
-  });
   try {
-    const r = await client.request<BashResult>(
-      { type: "bash", command: cmd, id },
-      120_000
-    );
-    if (r.success && r.data) {
-      // append only what the stream had not already delivered — truncated
-      // output can be shorter than the stream, leaving nothing to add
-      const rest = streamed > 0 ? r.data.output.slice(streamed) : r.data.output;
-      if (rest) blocks.appendOutput(blockId, rest);
+    const { invoke } = await import("@tauri-apps/api/core");
+    const cwd = useWorkspace.getState().root || ".";
+    const result = await invoke<TerminalCommandResult>("terminal_exec", { command: cmd, cwd });
+    if (result.output) blocks.appendOutput(blockId, result.output);
       blocks.updateBlock(blockId, {
-        status: r.data.cancelled
+        status: result.cancelled
           ? "cancelled"
-          : r.data.exitCode === 0
+          : result.exitCode === 0
             ? "success"
             : "error",
-        exitCode: r.data.exitCode,
+        exitCode: result.exitCode ?? undefined,
         endedAt: Date.now(),
       });
-    } else if (r.error) {
-      blocks.updateBlock(blockId, {
-        output: r.error,
-        status: "error",
-        endedAt: Date.now(),
-      });
-    }
   } catch (e) {
     blocks.updateBlock(blockId, {
       output: e instanceof Error ? e.message : "bash failed",
@@ -109,7 +89,6 @@ async function runBlockCommand(cmd: string) {
       endedAt: Date.now(),
     });
   } finally {
-    off();
     blockPromptLine();
   }
 }

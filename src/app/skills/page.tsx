@@ -2,24 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { usePi } from "@/lib/pi/store";
-import { usePiSettings, type SettingsScope } from "@/lib/pi/settings";
 import { useSkills, type SkillInfo, type SkillOrigin } from "@/lib/pi/skills";
 import { useT } from "@/lib/i18n";
 import {
   SettingsPage,
   InsetGroup,
   GroupRow,
-  IOSSwitch,
-  Segmented,
-  StringListEditor,
 } from "@/components/settings-ui";
 import { Skeleton } from "@/components/primitives";
 import {
   Search,
   Wand2,
   RefreshCw,
-  RotateCcw,
   Copy,
   Check,
   FileText,
@@ -177,7 +171,7 @@ function SkillRow({ skill, first }: { skill: SkillInfo; first: boolean }) {
     if (copyTimer.current) clearTimeout(copyTimer.current);
   }, []);
 
-  const command = `/skill:${skill.name}`;
+  const command = `/${skill.name}`;
 
   const copy = async () => {
     try {
@@ -419,12 +413,9 @@ function SkillRow({ skill, first }: { skill: SkillInfo; first: boolean }) {
 
 export default function SkillsPage() {
   const t = useT();
-  const { refresh } = usePi();
-  const settings = usePiSettings();
   const sk = useSkills();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SkillOrigin | null>(null);
-  const [resScope, setResScope] = useState<SettingsScope>("global");
 
   useEffect(() => {
     // scan() self-loads settings when needed; no need to await load() first,
@@ -458,9 +449,7 @@ export default function SkillsPage() {
   })).filter((g) => g.skills.length > 0);
 
   const rescan = async () => {
-    await settings.load();
     await sk.scan();
-    await refresh();
   };
 
   return (
@@ -546,39 +535,18 @@ export default function SkillsPage() {
         ))
       )}
 
-      {/* loading controls — settings.json skills paths + slash-command toggle */}
-      <InsetGroup header={t("skills.loadHeader")} footer={t("skills.loadFooter")}>
-        <div style={{ padding: "12px 14px" }}>
-          <Segmented
-            options={["global", "project"] as const}
-            value={resScope}
-            onChange={setResScope}
-          />
-        </div>
-        <div style={{ borderTop: "1px solid var(--separator)" }}>
-          <StringListEditor
-            items={settings[resScope].data?.skills as string[] | undefined}
-            onChange={(items) => settings.setKey(resScope, "skills", items)}
-            addPlaceholder={t("plugins.addPath")}
-          />
-        </div>
-        <div style={{ borderTop: "1px solid var(--separator)" }}>
-          <GroupRow
-            first
-            icon={<Wand2 size={15} />}
-            title={t("plugins.skillCommands")}
-            detail={t("plugins.skillCommandsDetail")}
-            trailing={
-              <IOSSwitch
-                checked={
-                  (settings.effective().enableSkillCommands as boolean | undefined) !==
-                  false
-                }
-                onChange={(v) => settings.setKey(resScope, "enableSkillCommands", v)}
-              />
-            }
-          />
-        </div>
+      <InsetGroup header="Claude Code Skills" footer="扫描 ~/.claude/skills 与当前工作区 .claude/skills。">
+        <GroupRow
+          first
+          icon={<Wand2 size={15} />}
+          title="全局 Skills"
+          detail="~/.claude/skills"
+        />
+        <GroupRow
+          icon={<Wand2 size={15} />}
+          title="项目 Skills"
+          detail="<workspace>/.claude/skills"
+        />
       </InsetGroup>
 
       <InsetGroup header={t("plugins.actions")}>
@@ -590,20 +558,11 @@ export default function SkillsPage() {
           detail={t("skills.rescanDetail")}
           onClick={rescan}
         />
-        {settings.dirtyRestart && (
-          <GroupRow
-            icon={<RotateCcw size={16} />}
-            iconBg="var(--warning, #C15F3C)"
-            title={t("plugins.restartTitle")}
-            detail={t("plugins.restartDetail")}
-            onClick={() => settings.restartPi()}
-          />
-        )}
       </InsetGroup>
 
-      {(sk.error || settings.lastError) && (
+      {sk.error && (
         <p style={{ marginTop: 16, fontSize: 12.5, color: "var(--danger, #E5484D)" }}>
-          {sk.error ?? settings.lastError}
+          {sk.error}
         </p>
       )}
     </SettingsPage>

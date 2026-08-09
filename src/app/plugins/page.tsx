@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@appica/ui-react/button";
 import { usePi } from "@/lib/pi/store";
+import ClaudePluginsPage from "@/features/pi-shell/ClaudePluginsPage";
 import {
   usePiSettings,
   packageSource,
@@ -52,7 +53,9 @@ function parseSource(src: string): { kind: string; name: string; version?: strin
   return { kind: "local", name: src };
 }
 
-export default function PluginsPage() {
+export default ClaudePluginsPage;
+
+function LegacyPluginsPage() {
   const { commands, mock, refresh } = usePi();
   const settings = usePiSettings();
   const [removing, setRemoving] = useState<string | null>(null);

@@ -1,11 +1,13 @@
 mod app_paths;
 mod claude;
 mod fs_bridge;
+mod process_utils;
 mod projects;
 mod updater;
 mod models;
 mod transcript;
 mod trash;
+mod terminal;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -67,14 +69,29 @@ fn open_external(url: String) -> Result<(), String> {
         return Err("only http(s) urls allowed".into());
     }
     #[cfg(target_os = "windows")]
-    let r = std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", &url])
-        .spawn();
+    let r = {
+        let mut command = std::process::Command::new("rundll32");
+        process_utils::hide_console(&mut command);
+        command.args(["url.dll,FileProtocolHandler", &url]).spawn()
+    };
     #[cfg(target_os = "macos")]
     let r = std::process::Command::new("open").arg(&url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let r = std::process::Command::new("xdg-open").arg(&url).spawn();
     r.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Fully terminate Claudeix, including the tray/event loop and any Claude
+/// runtime process owned by this application.
+fn quit_application(app: &tauri::AppHandle) {
+    app.state::<RuntimeRegistry>().stop_all();
+    app.exit(0);
+}
+
+#[tauri::command]
+fn app_quit(app: tauri::AppHandle) -> Result<(), String> {
+    quit_application(&app);
+    Ok(())
 }
 
 /// Build the system tray so the main window can be minimized to tray and
@@ -111,8 +128,7 @@ fn create_tray(app: &App) -> tauri::Result<()> {
                 }
             }
             "quit" => {
-                app.state::<RuntimeRegistry>().stop_all();
-                app.exit(0);
+                quit_application(app);
             }
             _ => {}
         })
@@ -185,6 +201,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             claude::commands::claude_status,
             claude::commands::claude_config,
+            claude::settings::claude_settings_read,
+            claude::settings::claude_settings_write,
+            claude::settings::claude_plugins_list,
+            claude::settings::claude_plugin_action,
             claude::commands::session_scan,
             claude::commands::session_get,
             claude::commands::session_refresh,
@@ -208,14 +228,18 @@ pub fn run() {
             trash::service::trash_restore,
             trash::service::trash_purge_preview,
             trash::service::trash_purge,
+            terminal::terminal_exec,
             claude::runtime_registry::runtime_probe_external,
             fs_bridge::workspace_root,
+            fs_bridge::fs_list_dir,
+            fs_bridge::fs_read_file,
             projects::projects_recent,
             projects::project_open,
             projects::project_remove_recent,
             projects::project_pick,
             updater::update_check,
             updater::update_apply,
+            app_quit,
             open_external
         ])
         .setup(|app| {
@@ -232,5 +256,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Pi desktop");
+        .expect("error while running Claudeix");
 }

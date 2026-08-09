@@ -2,7 +2,10 @@
 
 import { create } from "zustand";
 import { isTauri } from "./pi/client";
-import { flushActiveSession, useSessions } from "./pi/sessions";
+import { useSessionStore } from "@/features/sessions/session-store";
+import { useTranscriptStore } from "@/features/transcript/transcript-store";
+import { useRuntimeStore } from "@/features/runtime/runtime-store";
+import { useClaudeModel } from "@/features/runtime/model-store";
 
 export interface RecentProject {
   path: string;
@@ -30,7 +33,7 @@ interface WorkspaceStore {
   removeRecent: (path: string) => Promise<void>;
 }
 
-/** Project selection and Pi cwd lifecycle, without an embedded file editor. */
+/** Project selection and Claudeix session lifecycle, without an embedded file editor. */
 export const useWorkspace = create<WorkspaceStore>((set, get) => ({
   root: null,
   mock: !isTauri(),
@@ -77,11 +80,12 @@ export const useWorkspace = create<WorkspaceStore>((set, get) => ({
       const root = await tauriInvoke<string>("project_open", { path });
       await get().loadRecents();
       if (root === get().root) return;
-
-      await flushActiveSession();
       set({ root });
-
-      await useSessions.getState().switchProject(root);
+      useTranscriptStore.getState().clear();
+      useRuntimeStore.getState().reset();
+      useSessionStore.getState().setActiveKey(null);
+      await useClaudeModel.getState().load(root);
+      await useSessionStore.getState().scan(root, true);
     } catch (error) {
       set({ loadError: error instanceof Error ? error.message : String(error) });
     } finally {
