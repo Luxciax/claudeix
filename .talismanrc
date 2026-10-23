@@ -5,4 +5,20 @@ fileignoreconfig:
     checksum: 047a9c5383fda2a45a8de3eae60e3d55853af7a137fed23d37db2a20caf142bc
   - filename: docs/SELECTIVE_PORT_IMPLEMENTATION.md
     checksum: 7f1f1a2795a62b2f0b90cffa739caf12760076363893533c2ef80fe24d448862
+  # Reviewed: package integrity hashes, public tool/commit names, keydown callbacks,
+  # credential API field names, and the isolated fake test-a credential. No live secrets.
+  - filename: src-tauri/Cargo.lock
+    checksum: f2287f90700c5c6344656eaa289bc6518f3ff85523670bfca713ff350dcf25c3
+  - filename: pnpm-lock.yaml
+    checksum: ecce139f1b6d49ad2d32426eb60e6971cd44f88c8980ab55a5e8e14878f7813b
+  - filename: docs/SELECTIVE_PORT_STATUS.md
+    checksum: 7cde9aa945dc747af3f812ddd5d335e91c66916fc88716f97c915c1ba2a321a1
+  - filename: src/lib/tauri-api.ts
+    checksum: 5fc282f7f6b291c2c10908a8b87136962c9a7cd23dee527144f65df3feec1453
+  - filename: src/hooks/useModalFocus.ts
+    checksum: e1ee00229f045304274fbe3f192dc38a1a40ea9f51bcde567023fa9eb8c045f0
+  - filename: src-tauri/src/claude/models.rs
+    checksum: 085449ab4054e20ac06281ad8035db87cdc8a7f958bbf0d849c52a025c96fac2
+  - filename: tests/unit/claude-models.test.ts
+    checksum: 3ca861915e3f775eff8ae921a527ddfcda08bdc60c1e99219d33c647b56476c7
 version: "1.0"

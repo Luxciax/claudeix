@@ -109,11 +109,11 @@ export const api = {
   }) => invoke<void>("engine_trash_purge", { request }),
   claudeStatus: () => invoke<ClaudeStatus>("claude_status"),
   claudeConfig: () => invoke<ClaudeConfig>("claude_config"),
-  readClaudeModels: () => invoke<ClaudeSettingsFile>("claude_models_read"),
-  writeClaudeModels: (content: string) =>
-    invoke<ClaudeSettingsFile>("claude_models_write", { content }),
-  fetchClaudeModels: (baseUrl: string, apiKey?: string) =>
-    invoke<string[]>("claude_models_fetch", { baseUrl, apiKey: apiKey ?? null }),
+  readClaudeModels: () => invoke<ClaudeSettingsFile & { revision: string }>("claude_models_read"),
+  writeClaudeModels: (content: string, expectedRevision: string) =>
+    invoke<ClaudeSettingsFile & { revision: string }>("claude_models_write", { content, expectedRevision }),
+  fetchClaudeModels: (baseUrl: string, api: string, apiKey?: string) =>
+    invoke<string[]>("claude_models_fetch", { baseUrl, api, apiKey: apiKey ?? null }),
   readClaudeSettings: (scope: "global" | "project", workspaceRoot?: string | null) =>
     invoke<ClaudeSettingsFile>("claude_settings_read", {
       scope,

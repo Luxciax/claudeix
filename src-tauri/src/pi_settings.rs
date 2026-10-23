@@ -107,12 +107,7 @@ pub fn pi_cli(args: Vec<String>, cwd: Option<String>) -> Result<CliResult, Strin
         cmd.current_dir(dir);
     }
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    crate::process_utils::hide_console(&mut cmd);
 
     let out = cmd
         .output()

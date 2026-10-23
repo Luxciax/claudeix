@@ -16,7 +16,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "test:claude-stdio": "node scripts/test-claude-stdio.mjs"
+    "test:claude-stdio": "node scripts/test-claude-stdio.mjs",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@appica/ui-react": "^1.0.0",
@@ -48,7 +49,8 @@
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "3.2.4"
   },
   "pnpm": {
     "ignoredBuiltDependencies": [

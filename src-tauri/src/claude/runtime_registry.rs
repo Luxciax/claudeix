@@ -597,7 +597,7 @@ pub fn runtime_start(
         }
     };
     if let Err(error) =
-        crate::claude::models::configure_runtime_provider(&mut command, request.provider_id.as_deref())
+        crate::claude::models::configure_runtime_provider(&mut command, request.provider_id.as_deref(), request.model.as_deref())
     {
         registry.release_reservation(&lease_key, &runtime_id);
         return Err(error);
@@ -630,12 +630,7 @@ pub fn runtime_start(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    crate::process_utils::hide_console(&mut command);
 
     let mut child = match command.spawn() {
         Ok(child) => child,

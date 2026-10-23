@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Bot,
@@ -23,7 +23,8 @@ import { ProviderMeta, PROVIDER_META } from "@/components/provider-meta";
 import { ModelIcon } from "@/components/icons";
 import { resolveModelMetaOrFallback } from "@/lib/model-icon";
 import { useT } from "@/lib/i18n";
-import { isTauri } from "@/lib/pi/client";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { useModalFocus } from "@/hooks/useModalFocus";
 import {
   CLAUDE_API_TYPES,
   type ClaudeCustomModelDef as CustomModelDef,
@@ -39,16 +40,11 @@ import {
 
 const spring = { type: "spring" as const, stiffness: 320, damping: 28 };
 
-async function confirmRemoval(message: string): Promise<boolean> {
-  if (!isTauri()) return window.confirm(message);
-  const { confirm } = await import("@tauri-apps/plugin-dialog");
-  return confirm(message);
-}
-
 export default function ModelsPage() {
   const t = useT();
 
   const claudeModelsStore = useClaudeModels();
+  const [confirmation, setConfirmation] = useState<{ title: string; run: () => Promise<void> } | null>(null);
   const customProviders = claudeModelsStore.data.providers;
   const customLoaded = claudeModelsStore.loaded;
   const enabledModels = claudeModelsStore.data.enabledModels;
@@ -66,7 +62,11 @@ export default function ModelsPage() {
     providerId: string;
     models: string[];
     selected: string[];
+    existing: string[];
+    notReturned: string[];
+    revision: string;
   } | null>(null);
+  const fetchGeneration = useRef(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -103,7 +103,8 @@ export default function ModelsPage() {
 
   const setEnabled = async (providerId: string, modelId: string) => {
     const next = toggleModelEnabled(enabledModels, providerId, modelId, scopeModels);
-    await claudeModelsStore.setEnabledModels(next);
+    try { await claudeModelsStore.setEnabledModels(next); }
+    catch (error) { setFetchError(String(error)); }
   };
 
   const toggleExpanded = (providerId: string) => {
@@ -120,8 +121,7 @@ export default function ModelsPage() {
   };
 
   const handleRemoveProvider = async (providerId: string) => {
-    if (!(await confirmRemoval(t("models.removeProvider") + "?"))) return;
-    await claudeModelsStore.removeProvider(providerId);
+    setConfirmation({ title: t("models.removeProvider"), run: () => claudeModelsStore.removeProvider(providerId) });
   };
 
   const handleSaveModel = async (
@@ -134,11 +134,6 @@ export default function ModelsPage() {
         original.providerId,
         original.modelId,
         providerId,
-        {
-          baseUrl: customProviders[providerId]?.baseUrl ?? "",
-          api: customProviders[providerId]?.api ?? CLAUDE_API_TYPES[0],
-          apiKey: customProviders[providerId]?.apiKey,
-        },
         model
       );
     } else {
@@ -153,33 +148,42 @@ export default function ModelsPage() {
   };
 
   const handleRemoveModel = async (providerId: string, modelId: string) => {
-    if (!(await confirmRemoval(t("models.removeModel") + "?"))) return;
-    await claudeModelsStore.removeModel(providerId, modelId);
+    setConfirmation({ title: t("models.removeModel"), run: () => claudeModelsStore.removeModel(providerId, modelId) });
   };
 
   const handleFetch = async (providerId: string) => {
     const provider = customProviders[providerId];
     if (!provider) return;
+    const generation = ++fetchGeneration.current;
+    const revision = claudeModelsStore.revision;
+    if (!revision) return;
     setFetchingProviderId(providerId);
     setFetchError(null);
     try {
       const list = await claudeModelsStore.fetchModels(provider.baseUrl, provider.api, provider.apiKey);
+      if (generation !== fetchGeneration.current || useClaudeModels.getState().revision !== revision) return;
       const existing = new Set(provider.models.map((m) => m.id));
       const selectable = list.filter((id) => !existing.has(id));
       setFetchResult({
         providerId,
         models: selectable,
         selected: selectable,
+        existing: list.filter((id) => existing.has(id)),
+        notReturned: provider.models.filter((m) => !list.includes(m.id)).map((m) => m.id),
+        revision,
       });
     } catch (e) {
-      setFetchError(String(e));
+      if (generation === fetchGeneration.current) setFetchError(String(e));
     } finally {
-      setFetchingProviderId(null);
+      if (generation === fetchGeneration.current) setFetchingProviderId(null);
     }
   };
 
   const handleAddFetched = async () => {
     if (!fetchResult) return;
+    if (useClaudeModels.getState().revision !== fetchResult.revision) {
+      setFetchError("配置已变化，请重新拉取模型并预览"); return;
+    }
     const provider = customProviders[fetchResult.providerId];
     if (!provider) return;
     await claudeModelsStore.addModels(
@@ -189,7 +193,7 @@ export default function ModelsPage() {
         api: provider.api,
         apiKey: provider.apiKey,
       },
-      fetchResult.selected.map((id) => ({ id, name: id }))
+      fetchResult.selected.map((id) => ({ id, name: id, provenance: "discovered" }))
     );
     setFetchResult(null);
   };
@@ -585,12 +589,14 @@ export default function ModelsPage() {
               }}
             >
               {claudeModelsStore.lastError || claudeModelsStore.parseError}
+              <button className="ml-3 underline" disabled={claudeModelsStore.busy} onClick={() => void claudeModelsStore.load()}>重新读取配置</button>
             </motion.div>
           )}
         </div>
       </div>
 
       {/* Dialogs */}
+      {confirmation && <ConfirmDialog title={confirmation.title} message="确认执行此操作？" danger onConfirm={confirmation.run} onCancel={() => setConfirmation(null)} />}
       <ProviderDialog
         open={addingProvider}
         onClose={() => setAddingProvider(false)}
@@ -632,7 +638,7 @@ export default function ModelsPage() {
           result={fetchResult}
           onClose={() => setFetchResult(null)}
           onChangeSelected={(ids) => setFetchResult({ ...fetchResult, selected: ids })}
-          onAdd={handleAddFetched}
+          onAdd={() => void handleAddFetched().catch((error) => setFetchError(String(error)))}
         />
       )}
       {fetchError && (
@@ -664,10 +670,11 @@ function ProviderDialog({
   providerId?: string;
   provider?: CustomProvider;
   onClose: () => void;
-  onSave: (id: string, p: CustomProvider) => void;
+  onSave: (id: string, p: CustomProvider) => Promise<void>;
 }) {
   const t = useT();
   const isEdit = !!provider;
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [id, setId] = useState(providerId ?? "");
   const [api, setApi] = useState(provider?.api ?? CLAUDE_API_TYPES[0]);
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? "");
@@ -675,6 +682,7 @@ function ProviderDialog({
 
   useEffect(() => {
     if (open) {
+      setSaveError(null);
       setId(providerId ?? "");
       setApi(provider?.api ?? CLAUDE_API_TYPES[0]);
       setBaseUrl(provider?.baseUrl ?? "");
@@ -684,12 +692,12 @@ function ProviderDialog({
 
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    onSave(id.trim(), {
+    void onSave(id.trim(), {
       baseUrl: baseUrl.trim(),
       api,
       apiKey: apiKey.trim() || undefined,
       models: provider?.models ?? [],
-    });
+    }).catch((error) => setSaveError(String(error)));
   };
 
   return (
@@ -706,6 +714,7 @@ function ProviderDialog({
         </>
       }
     >
+      {saveError && <p role="alert" style={{ color: "var(--danger)" }}>{saveError}</p>}
       <form id="provider-form" onSubmit={submit} className="space-y-3">
         <Field label={t("models.providerId")}>
           <input
@@ -774,10 +783,11 @@ function ModelDialog({
   providerId: string;
   model?: CustomModelDef;
   onClose: () => void;
-  onSave: (m: CustomModelDef) => void;
+  onSave: (m: CustomModelDef) => Promise<void>;
 }) {
   const t = useT();
   const isEdit = !!model;
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [id, setId] = useState(model?.id ?? "");
   const [name, setName] = useState(model?.name ?? "");
   const [contextWindow, setContextWindow] = useState(model?.contextWindow?.toString() ?? "");
@@ -786,6 +796,7 @@ function ModelDialog({
 
   useEffect(() => {
     if (open) {
+      setSaveError(null);
       setId(model?.id ?? "");
       setName(model?.name ?? "");
       setContextWindow(model?.contextWindow?.toString() ?? "");
@@ -796,13 +807,13 @@ function ModelDialog({
 
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    onSave({
+    void onSave({
       id: id.trim(),
       name: name.trim() || undefined,
       contextWindow: contextWindow ? Number(contextWindow) : undefined,
       maxTokens: maxTokens ? Number(maxTokens) : undefined,
       reasoning,
-    });
+    }).catch((error) => setSaveError(String(error)));
   };
 
   return (
@@ -819,6 +830,7 @@ function ModelDialog({
         </>
       }
     >
+      {saveError && <p role="alert" style={{ color: "var(--danger)" }}>{saveError}</p>}
       <form id="model-form" onSubmit={submit} className="space-y-3">
         <Field label={t("models.modelId")}>
           <input
@@ -882,7 +894,7 @@ function FetchDialog({
   onChangeSelected,
   onAdd,
 }: {
-  result: { providerId: string; models: string[]; selected: string[] };
+  result: { providerId: string; models: string[]; selected: string[]; existing: string[]; notReturned: string[]; revision: string };
   onClose: () => void;
   onChangeSelected: (ids: string[]) => void;
   onAdd: () => void;
@@ -921,7 +933,7 @@ function FetchDialog({
   return (
     <Dialog
       open
-      title={t("models.selectModelsToAdd")}
+      title="模型同步预览"
       onClose={onClose}
       actions={
         <>
@@ -932,6 +944,9 @@ function FetchDialog({
         </>
       }
     >
+      <p>新增 {result.models.length} · 已存在 {result.existing.length} · 本次未返回 {result.notReturned.length}</p>
+      {result.existing.length > 0 && <details><summary>已存在（保留元数据）</summary>{result.existing.join("、")}</details>}
+      {result.notReturned.length > 0 && <details><summary>本次未返回（全部保留）</summary><p>{result.notReturned.join("、")}</p><p>列表可能按权限过滤或未完整返回；不会自动删除本地模型。</p></details>}
       <div className="mb-3 flex items-center gap-2">
         <div
           className="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2"
@@ -1133,6 +1148,9 @@ function Dialog({
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const store = useClaudeModels();
+  const close = () => { if (!store.busy) onClose(); };
+  const panel = useModalFocus(open, close);
   return (
     <AnimatePresence>
       {open && (
@@ -1143,10 +1161,11 @@ function Dialog({
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(6px)" }}
-          onClick={onClose}
+          onClick={close}
         >
           <motion.div
             key="dialog-panel"
+            ref={panel} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}
             initial={{ opacity: 0, scale: 0.94, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
@@ -1174,20 +1193,21 @@ function Dialog({
                 {title}
               </h3>
               <button
-                onClick={onClose}
+                onClick={close}
                 className="rounded-full p-1 transition-colors"
                 style={{ color: "var(--muted-foreground)" }}
               >
                 <X size={18} />
               </button>
             </div>
-            <div className="p-5">{children}</div>
+            <fieldset disabled={store.busy || store.status !== "ready"} className="p-5" style={{ minWidth: 0 }}>{children}</fieldset>
+            {store.lastError && <p role="alert" className="px-5" style={{ color: "var(--danger)" }}>{store.lastError}</p>}
             {actions && (
               <div
                 className="flex justify-end gap-2 border-t px-5 py-4"
                 style={{ borderColor: "var(--ink-border)" }}
               >
-                {actions}
+                <fieldset disabled={store.busy || store.status !== "ready"} className="flex gap-2">{actions}</fieldset>
               </div>
             )}
           </motion.div>

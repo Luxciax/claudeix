@@ -60,7 +60,7 @@ export function ClaudeModelPicker({ compact = false }: { compact?: boolean }) {
   const selectedCustom = customModels.find(
     (entry) => entry.providerId === providerId && entry.id === model
   );
-  const label =
+  const label = providerId && !selectedCustom ? "模型已失效，请重新选择" :
     selectedCustom?.label ??
     PRESETS.find((item) => !providerId && item.id === model)?.label ??
     model ??

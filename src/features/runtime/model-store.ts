@@ -22,12 +22,15 @@ interface ClaudeModelState {
   load: (workspaceRoot?: string | null) => Promise<void>;
 }
 
+let generation = 0;
+
 export const useClaudeModel = create<ClaudeModelState>((set) => ({
   providerId: null,
   model: null,
   loaded: false,
-  setModel: (model, providerId = null) => set({ model, providerId }),
+  setModel: (model, providerId = null) => { ++generation; set({ model, providerId }); },
   load: async (workspaceRoot) => {
+    const current = ++generation;
     try {
       const [global, project] = await Promise.all([
         api.readClaudeSettings("global", workspaceRoot),
@@ -35,12 +38,14 @@ export const useClaudeModel = create<ClaudeModelState>((set) => ({
           ? api.readClaudeSettings("project", workspaceRoot).catch(() => null)
           : Promise.resolve(null),
       ]);
+      if (current !== generation) return;
       set({
         providerId: null,
         model: modelFromContent(project?.content ?? "") ?? modelFromContent(global.content),
         loaded: true,
       });
     } catch {
+      if (current !== generation) return;
       set({ loaded: true });
     }
   },

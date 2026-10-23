@@ -43,6 +43,9 @@ jobs:
       - name: TypeScript check
         run: pnpm exec tsc --noEmit
 
+      - name: Frontend unit tests
+        run: pnpm test:unit
+
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test --lib
