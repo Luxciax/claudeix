@@ -181,6 +181,7 @@ export function ClaudeAgentPanel() {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [permissionMode, setPermissionMode] = useState("manual");
+  const selectedProviderId = useClaudeModel((state) => state.providerId);
   const selectedModel = useClaudeModel((state) => state.model);
   const [showEdit, setShowEdit] = useState(false);
   const [showSnapshots, setShowSnapshots] = useState(false);
@@ -246,6 +247,7 @@ export function ClaudeAgentPanel() {
       sessionKey: activeKey,
       prompt,
       permissionMode,
+      providerId: selectedProviderId,
       model: selectedModel,
     });
   };

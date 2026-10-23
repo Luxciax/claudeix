@@ -18,6 +18,7 @@ pub struct RuntimeStartRequest {
     pub session_key: Option<String>,
     pub prompt: String,
     pub permission_mode: String,
+    pub provider_id: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
 }

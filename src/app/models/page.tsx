@@ -24,15 +24,12 @@ import { ModelIcon } from "@/components/icons";
 import { resolveModelMetaOrFallback } from "@/lib/model-icon";
 import { useT } from "@/lib/i18n";
 import { isTauri } from "@/lib/pi/client";
-import ClaudeModelsPage from "@/features/pi-shell/ClaudeModelsPage";
-import { usePi } from "@/lib/pi/store";
-import { usePiSettings } from "@/lib/pi/settings";
 import {
-  API_TYPES,
-  type CustomModelDef,
-  type CustomProvider,
-  usePiModels,
-} from "@/lib/pi/models";
+  CLAUDE_API_TYPES,
+  type ClaudeCustomModelDef as CustomModelDef,
+  type ClaudeCustomProvider as CustomProvider,
+  useClaudeModels,
+} from "@/lib/claude/models";
 import {
   type ModelRefLike,
   isModelEnabled,
@@ -48,21 +45,13 @@ async function confirmRemoval(message: string): Promise<boolean> {
   return confirm(message);
 }
 
-export default ClaudeModelsPage;
-
-function LegacyModelsPage() {
+export default function ModelsPage() {
   const t = useT();
 
-  const piStatus = usePi((s) => s.status);
-  const piModels = usePi((s) => s.models);
-
-  const piModelsStore = usePiModels();
-  const customProviders = piModelsStore.data.providers;
-  const customLoaded = piModelsStore.loaded;
-
-  const piSettings = usePiSettings();
-  const dirtyRestart = piSettings.dirtyRestart;
-  const enabledModels = piSettings.effective().enabledModels ?? [];
+  const claudeModelsStore = useClaudeModels();
+  const customProviders = claudeModelsStore.data.providers;
+  const customLoaded = claudeModelsStore.loaded;
+  const enabledModels = claudeModelsStore.data.enabledModels;
 
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -81,8 +70,7 @@ function LegacyModelsPage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
-    piModelsStore.load();
-    piSettings.load();
+    void claudeModelsStore.load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -103,39 +91,26 @@ function LegacyModelsPage() {
     }
   }, [customProviders]);
 
-  /**
-   * Every model we can name in a scope entry: what pi reports plus the
-   * models.json definitions (a freshly added provider isn't in pi's list until
-   * it restarts). Used to rewrite a legacy bare-id entry into per-provider refs.
-   */
   const scopeModels = useMemo<ModelRefLike[]>(() => {
-    const list = piModels.map((m) => ({ provider: m.provider, id: m.id }));
-    const seen = new Set(list.map((m) => modelRef(m.provider, m.id)));
+    const list: ModelRefLike[] = [];
     for (const [providerId, provider] of Object.entries(customProviders)) {
-      for (const m of provider.models ?? []) {
-        const ref = modelRef(providerId, m.id);
-        if (seen.has(ref)) continue;
-        seen.add(ref);
-        list.push({ provider: providerId, id: m.id });
+      for (const model of provider.models ?? []) {
+        list.push({ provider: providerId, id: model.id });
       }
     }
     return list;
-  }, [piModels, customProviders]);
+  }, [customProviders]);
 
   const setEnabled = async (providerId: string, modelId: string) => {
     const next = toggleModelEnabled(enabledModels, providerId, modelId, scopeModels);
-    await piSettings.setKey(
-      "global",
-      "enabledModels",
-      next.length > 0 ? next : undefined
-    );
+    await claudeModelsStore.setEnabledModels(next);
   };
 
   const toggleExpanded = (providerId: string) => {
     setExpanded((prev) => ({ ...prev, [providerId]: !prev[providerId] }));
   };
   const handleSaveProvider = async (providerId: string, provider: CustomProvider) => {
-    await piModelsStore.updateProvider(providerId, {
+    await claudeModelsStore.updateProvider(providerId, {
       baseUrl: provider.baseUrl,
       api: provider.api,
       apiKey: provider.apiKey,
@@ -146,7 +121,7 @@ function LegacyModelsPage() {
 
   const handleRemoveProvider = async (providerId: string) => {
     if (!(await confirmRemoval(t("models.removeProvider") + "?"))) return;
-    await piModelsStore.removeProvider(providerId);
+    await claudeModelsStore.removeProvider(providerId);
   };
 
   const handleSaveModel = async (
@@ -155,21 +130,21 @@ function LegacyModelsPage() {
     original?: { providerId: string; modelId: string }
   ) => {
     if (original) {
-      await piModelsStore.updateModel(
+      await claudeModelsStore.updateModel(
         original.providerId,
         original.modelId,
         providerId,
         {
           baseUrl: customProviders[providerId]?.baseUrl ?? "",
-          api: customProviders[providerId]?.api ?? API_TYPES[0],
+          api: customProviders[providerId]?.api ?? CLAUDE_API_TYPES[0],
           apiKey: customProviders[providerId]?.apiKey,
         },
         model
       );
     } else {
-      await piModelsStore.addModel(providerId, {
+      await claudeModelsStore.addModel(providerId, {
         baseUrl: customProviders[providerId]?.baseUrl ?? "",
-        api: customProviders[providerId]?.api ?? API_TYPES[0],
+        api: customProviders[providerId]?.api ?? CLAUDE_API_TYPES[0],
         apiKey: customProviders[providerId]?.apiKey,
       }, model);
     }
@@ -179,7 +154,7 @@ function LegacyModelsPage() {
 
   const handleRemoveModel = async (providerId: string, modelId: string) => {
     if (!(await confirmRemoval(t("models.removeModel") + "?"))) return;
-    await piModelsStore.removeModel(providerId, modelId);
+    await claudeModelsStore.removeModel(providerId, modelId);
   };
 
   const handleFetch = async (providerId: string) => {
@@ -188,7 +163,7 @@ function LegacyModelsPage() {
     setFetchingProviderId(providerId);
     setFetchError(null);
     try {
-      const list = await piModelsStore.fetchModels(provider.baseUrl, provider.api, provider.apiKey);
+      const list = await claudeModelsStore.fetchModels(provider.baseUrl, provider.api, provider.apiKey);
       const existing = new Set(provider.models.map((m) => m.id));
       const selectable = list.filter((id) => !existing.has(id));
       setFetchResult({
@@ -207,7 +182,7 @@ function LegacyModelsPage() {
     if (!fetchResult) return;
     const provider = customProviders[fetchResult.providerId];
     if (!provider) return;
-    await piModelsStore.addModels(
+    await claudeModelsStore.addModels(
       fetchResult.providerId,
       {
         baseUrl: provider.baseUrl,
@@ -238,7 +213,10 @@ function LegacyModelsPage() {
   const paperBg = "var(--ink-paper-bg)";
 
   return (
-    <SettingsPage title={t("models.title")} subtitle={t("models.customModelsHelp")}>
+    <SettingsPage
+      title={t("models.title")}
+      subtitle="管理 Claude Code 的 Provider、模型和聊天可见范围。"
+    >
       <div
         className="min-h-full"
         style={{
@@ -391,7 +369,12 @@ function LegacyModelsPage() {
                             </button>
                             <button
                               onClick={() => handleFetch(providerId)}
-                              disabled={fetchingProviderId === providerId}
+                              disabled={
+                                fetchingProviderId === providerId ||
+                                (provider.api !== "anthropic-messages" &&
+                                  provider.api !== "anthropic-auth-token") ||
+                                !provider.baseUrl
+                              }
                               className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
                               style={{
                                 background: "var(--input-bg)",
@@ -581,19 +564,19 @@ function LegacyModelsPage() {
             {t("models.enabledInChatFooter")}
           </motion.div>
 
-          {/* All models reported by pi */}
-          {piStatus === "ready" && (
+          {/* Models exposed to Claude Code chat */}
+          {customLoaded && (
             <AllModelsSection
+              providers={customProviders}
               enabledModels={enabledModels}
               onToggle={setEnabled}
             />
           )}
 
-          {/* Restart hint */}
-          {dirtyRestart && (
+          {(claudeModelsStore.lastError || claudeModelsStore.parseError) && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               className="rounded-2xl border px-4 py-3 text-sm"
               style={{
                 background: "rgba(196,92,72,0.08)",
@@ -601,7 +584,7 @@ function LegacyModelsPage() {
                 color: "#c45c48",
               }}
             >
-              {t("models.footer")}
+              {claudeModelsStore.lastError || claudeModelsStore.parseError}
             </motion.div>
           )}
         </div>
@@ -686,14 +669,14 @@ function ProviderDialog({
   const t = useT();
   const isEdit = !!provider;
   const [id, setId] = useState(providerId ?? "");
-  const [api, setApi] = useState(provider?.api ?? API_TYPES[0]);
+  const [api, setApi] = useState(provider?.api ?? CLAUDE_API_TYPES[0]);
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? "");
   const [apiKey, setApiKey] = useState(provider?.apiKey ?? "");
 
   useEffect(() => {
     if (open) {
       setId(providerId ?? "");
-      setApi(provider?.api ?? API_TYPES[0]);
+      setApi(provider?.api ?? CLAUDE_API_TYPES[0]);
       setBaseUrl(provider?.baseUrl ?? "");
       setApiKey(provider?.apiKey ?? "");
     }
@@ -741,9 +724,17 @@ function ProviderDialog({
             className="w-full rounded-xl border bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--ink-accent)]"
             style={{ borderColor: "var(--ink-border)", color: "var(--foreground)" }}
           >
-            {API_TYPES.map((type) => (
+            {CLAUDE_API_TYPES.map((type) => (
               <option key={type} value={type}>
-                {type}
+                {type === "anthropic-messages"
+                  ? "Anthropic API Key"
+                  : type === "anthropic-auth-token"
+                    ? "Anthropic Auth Token / 兼容网关"
+                    : type === "bedrock"
+                    ? "Amazon Bedrock"
+                    : type === "vertex"
+                      ? "Google Vertex AI"
+                      : "Microsoft Foundry"}
               </option>
             ))}
           </select>
@@ -752,13 +743,14 @@ function ProviderDialog({
           <input
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://api.openai.com/v1"
+            placeholder="https://gateway.example.com"
             className="w-full rounded-xl border bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--ink-accent)]"
             style={{ borderColor: "var(--ink-border)", color: "var(--foreground)" }}
           />
         </Field>
         <Field label={t("models.apiKey")}>
           <input
+            type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={t("models.apiKeyPlaceholder")}
@@ -1020,24 +1012,27 @@ function FetchDialog({
 }
 
 function AllModelsSection({
+  providers,
   enabledModels,
   onToggle,
 }: {
+  providers: Record<string, CustomProvider>;
   enabledModels: string[];
   onToggle: (providerId: string, modelId: string) => void | Promise<void>;
 }) {
   const t = useT();
-  const piModels = usePi((s) => s.models);
 
-  const groups = useMemo(() => {
-    const map = new Map<string, string[]>();
-    piModels.forEach((m) => {
-      const list = map.get(m.provider) ?? [];
-      list.push(m.id);
-      map.set(m.provider, list);
-    });
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [piModels]);
+  const groups = useMemo(
+    () =>
+      Object.entries(providers)
+        .map(
+          ([providerId, provider]) =>
+            [providerId, (provider.models ?? []).map((model) => model.id)] as [string, string[]]
+        )
+        .filter(([, modelIds]) => modelIds.length > 0)
+        .sort(([a], [b]) => a.localeCompare(b)),
+    [providers]
+  );
 
   return (
     <motion.div

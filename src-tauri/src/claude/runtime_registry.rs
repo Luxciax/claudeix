@@ -596,6 +596,12 @@ pub fn runtime_start(
             return Err(error);
         }
     };
+    if let Err(error) =
+        crate::claude::models::configure_runtime_provider(&mut command, request.provider_id.as_deref())
+    {
+        registry.release_reservation(&lease_key, &runtime_id);
+        return Err(error);
+    }
     command.args([
         "-p",
         "--output-format",

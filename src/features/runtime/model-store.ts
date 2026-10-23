@@ -15,16 +15,18 @@ function modelFromContent(content: string): string | null {
 }
 
 interface ClaudeModelState {
+  providerId: string | null;
   model: string | null;
   loaded: boolean;
-  setModel: (model: string | null) => void;
+  setModel: (model: string | null, providerId?: string | null) => void;
   load: (workspaceRoot?: string | null) => Promise<void>;
 }
 
 export const useClaudeModel = create<ClaudeModelState>((set) => ({
+  providerId: null,
   model: null,
   loaded: false,
-  setModel: (model) => set({ model }),
+  setModel: (model, providerId = null) => set({ model, providerId }),
   load: async (workspaceRoot) => {
     try {
       const [global, project] = await Promise.all([
@@ -34,6 +36,7 @@ export const useClaudeModel = create<ClaudeModelState>((set) => ({
           : Promise.resolve(null),
       ]);
       set({
+        providerId: null,
         model: modelFromContent(project?.content ?? "") ?? modelFromContent(global.content),
         loaded: true,
       });

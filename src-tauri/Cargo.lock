@@ -344,6 +344,7 @@ name = "claudeix"
 version = "0.2.3"
 dependencies = [
  "dirs 5.0.1",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
