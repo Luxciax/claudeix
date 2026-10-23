@@ -8,8 +8,8 @@
  * the pi process to apply. In browser preview everything runs on an in-memory
  * mock so the Settings UI is fully explorable.
  *
- * File locations (identical scheme on Windows & macOS — pi uses homedir()):
- *   global : ~/.pi/agent/settings.json
+ * File locations:
+ *   global : $PI_CODING_AGENT_DIR/settings.json, otherwise ~/.pi/agent/settings.json
  *   project: <project root>/.pi/settings.json   (overrides global, deep-merged)
  */
 

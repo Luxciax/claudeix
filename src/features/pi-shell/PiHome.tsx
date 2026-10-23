@@ -3,17 +3,22 @@
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { AnimatePresence, motion } from "motion/react";
-import { Command, Sparkles } from "lucide-react";
+import { Bot, Code2, Command, Sparkles } from "lucide-react";
 
 import { TopBar } from "@/components/TopBar";
 import { CommandPalette } from "@/components/CommandPalette";
 import { Kbd } from "@/components/primitives";
 import { ClaudeAgentPanel } from "./ClaudeAgentPanel";
 import { ClaudeSessionSidebar } from "./ClaudeSessionSidebar";
+import { PiAgentPanel } from "./PiAgentPanel";
+import { PiSessionSidebar } from "./PiSessionSidebar";
+import { usePiNativeStore } from "@/features/engines/pi-native-store";
+import { useChat } from "@/lib/pi/chat";
 import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import { useSessionStore } from "@/features/sessions/session-store";
 import { useUI } from "@/lib/store";
 import { useWorkspace } from "@/lib/workspace";
+import { useEngineSelection } from "@/features/engines/engine-selection";
 
 const TerminalDrawer = dynamic(
   () => import("@/components/TerminalDrawer").then((module) => module.TerminalDrawer),
@@ -28,13 +33,23 @@ export default function PiHome() {
   const activeKey = useSessionStore((state) => state.activeKey);
   const runtime = useRuntimeStore((state) => state.snapshot);
   const startRuntime = useRuntimeStore((state) => state.start);
+  const piStreaming = useChat((state) => state.streaming);
   const [zenDraft, setZenDraft] = useState("");
+  const activeEngine = useEngineSelection((state) => state.activeEngine);
+  const setActiveEngine = useEngineSelection((state) => state.setActiveEngine);
 
-  const running =
+  const claudeRunning =
     runtime?.status === "starting" ||
     runtime?.status === "running" ||
     runtime?.status === "waiting_permission" ||
     runtime?.status === "stopping";
+  const running = activeEngine === "pi" ? piStreaming : claudeRunning;
+
+  useEffect(() => {
+    if (activeEngine === "pi" && workspace) {
+      void usePiNativeStore.getState().boot(workspace);
+    }
+  }, [activeEngine, workspace]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -61,6 +76,10 @@ export default function PiHome() {
     const prompt = zenDraft.trim();
     if (!prompt || !workspace || running) return;
     setZenDraft("");
+    if (activeEngine === "pi") {
+      await useChat.getState().send(prompt);
+      return;
+    }
     await startRuntime({
       workspaceRoot: workspace,
       sessionKey: activeKey,
@@ -102,7 +121,12 @@ export default function PiHome() {
               transition={springPanel}
               style={{ overflow: "hidden", flexShrink: 0 }}
             >
-              <ClaudeSessionSidebar />
+              <div style={{ display: "flex", flexDirection: "column", width: 248, height: "100%" }}>
+                <EngineSwitch active={activeEngine} onChange={setActiveEngine} />
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  {activeEngine === "claude" ? <ClaudeSessionSidebar /> : <PiSessionSidebar />}
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -122,7 +146,7 @@ export default function PiHome() {
               overflow: "hidden",
             }}
           >
-            <ClaudeAgentPanel />
+            {activeEngine === "claude" ? <ClaudeAgentPanel /> : <PiAgentPanel />}
           </motion.div>
         )}
       </div>
@@ -163,7 +187,11 @@ export default function PiHome() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void submitZen();
                 }}
-                placeholder={running ? "Claude Code 正在运行…" : "向 Claude Code 描述任务…"}
+                placeholder={
+                  running
+                    ? `${activeEngine === "pi" ? "Pi" : "Claude Code"} 正在运行…`
+                    : `向 ${activeEngine === "pi" ? "Pi" : "Claude Code"} 描述任务…`
+                }
                 style={{
                   flex: 1,
                   border: "none",
@@ -174,7 +202,9 @@ export default function PiHome() {
                   fontFamily: "var(--font-ui)",
                 }}
               />
-              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Claude Code</span>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                {activeEngine === "pi" ? "Pi" : "Claude Code"}
+              </span>
               <Kbd style={{ fontSize: 11, background: "transparent", border: "none" }}>
                 <Command size={10} />.
               </Kbd>
@@ -185,5 +215,78 @@ export default function PiHome() {
 
       <CommandPalette />
     </div>
+  );
+}
+
+function EngineSwitch({
+  active,
+  onChange,
+}: {
+  active: "claude" | "pi";
+  onChange: (engine: "claude" | "pi") => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 4,
+        margin: "8px 8px 0",
+        padding: 3,
+        borderRadius: 9,
+        background: "var(--bg-sunken)",
+        border: "1px solid var(--separator)",
+        flexShrink: 0,
+      }}
+    >
+      <EngineButton
+        active={active === "claude"}
+        label="Claude"
+        icon={<Bot size={12} />}
+        onClick={() => onChange("claude")}
+      />
+      <EngineButton
+        active={active === "pi"}
+        label="Pi"
+        icon={<Code2 size={12} />}
+        onClick={() => onChange("pi")}
+      />
+    </div>
+  );
+}
+
+function EngineButton({
+  active,
+  label,
+  icon,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        height: 27,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 5,
+        border: "none",
+        borderRadius: 6,
+        fontSize: 11,
+        fontWeight: 600,
+        cursor: "pointer",
+        background: active ? "var(--bg-elevated)" : "transparent",
+        color: active ? "var(--text-primary)" : "var(--text-tertiary)",
+        boxShadow: active ? "var(--shadow-xs)" : "none",
+      }}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }

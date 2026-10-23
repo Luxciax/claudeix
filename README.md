@@ -14,7 +14,7 @@ Claudeix 是一个面向 Claude Code 的轻量 Windows 桌面客户端。
 
 ## 当前状态
 
-`v0.1.2` 修复版正在开发中。主界面与功能导航继续以 Pi Desktop 的 AppShell / TopBar / SessionSidebar / AgentPanel / ComposerInput / TerminalDrawer / Settings UI 为基座，Claudeix 只替换底层 Claude Code 数据与运行逻辑；本版同时修复主窗口退出白屏、Windows 后台命令窗口闪现，并更换 Claudeix 应用图标。
+`v0.2.3` 当前收口 Claude + Pi 双 Agent。主界面与功能导航继续以 Pi Desktop 的 AppShell / TopBar / SessionSidebar / AgentPanel / ComposerInput / TerminalDrawer / Settings UI 为基座，不重新设计 UI；Claude / Pi 会话、Runtime、编辑、回收站均已接入，插件与商店页面会跟随当前 Agent 切换，Pi 使用原生 settings/package 数据源。
 
 已完成：
 

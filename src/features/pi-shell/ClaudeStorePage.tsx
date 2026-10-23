@@ -6,6 +6,7 @@ import { Download, Package, RefreshCw, Store } from "lucide-react";
 
 import { GroupRow, InsetGroup, SettingsPage } from "@/components/settings-ui";
 import { api } from "@/lib/tauri-api";
+import { EngineScopeSelector } from "@/features/engines/EngineScopeSelector";
 
 type MarketplacePlugin = {
   id: string;
@@ -95,6 +96,7 @@ export default function ClaudeStorePage() {
       title="商店"
       subtitle="Pi Desktop Store 模块保留，数据源替换为 Claude Code Plugin Marketplace。"
     >
+      <EngineScopeSelector />
       <InsetGroup header="Marketplace">
         <GroupRow
           first

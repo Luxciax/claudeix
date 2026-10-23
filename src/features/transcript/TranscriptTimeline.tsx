@@ -31,12 +31,14 @@ function pretty(value: unknown): string {
 function BlockView({
   block,
   target,
+  sourceLabel,
   editingDisabled,
   mutating,
   onEdit,
 }: {
   block: ContentBlock;
   target: EditTarget | null;
+  sourceLabel: string;
   editingDisabled: boolean;
   mutating: boolean;
   onEdit: (target: EditTarget, newText: string) => Promise<boolean>;
@@ -76,7 +78,7 @@ function BlockView({
               }}
             />
             <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-              保存后会直接覆盖 Claude Code 原始 JSONL；写入前会自动创建完整快照。
+              保存后会直接覆盖 {sourceLabel} 原始会话；写入前会自动创建完整快照。
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button
@@ -129,7 +131,7 @@ function BlockView({
                 setEditing(true);
               }}
               disabled={editingDisabled || mutating}
-              title={editingDisabled ? "会话运行或被外部 Claude 占用时不能编辑" : "编辑这条用户消息"}
+              title={editingDisabled ? `会话运行或被外部 ${sourceLabel} 占用时不能编辑` : "编辑这条消息"}
               style={{
                 position: "absolute",
                 top: -4,
@@ -232,12 +234,16 @@ function BlockView({
 
 function RecordView({
   record,
+  assistantLabel,
+  sourceLabel,
   allowAssistantEditing,
   editingDisabled,
   mutating,
   onEdit,
 }: {
   record: TranscriptRecord;
+  assistantLabel: string;
+  sourceLabel: string;
   allowAssistantEditing: boolean;
   editingDisabled: boolean;
   mutating: boolean;
@@ -274,7 +280,7 @@ function RecordView({
           color: "var(--text-tertiary)",
         }}
       >
-        <span>{isUser ? "你" : isAssistant ? "Claude" : record.rawType}</span>
+        <span>{isUser ? "你" : isAssistant ? assistantLabel : record.rawType}</span>
         <span>JSONL 第 {record.lineIndex + 1} 行</span>
       </div>
       <div style={{ display: "grid", gap: 10 }}>
@@ -295,6 +301,7 @@ function RecordView({
               key={`${record.rawHash}-${index}`}
               block={block}
               target={target}
+              sourceLabel={sourceLabel}
               editingDisabled={editingDisabled}
               mutating={mutating}
               onEdit={onEdit}
@@ -308,12 +315,16 @@ function RecordView({
 
 export function TranscriptTimeline({
   detail,
+  assistantLabel = "Claude",
+  sourceLabel = "Claude Code",
   allowAssistantEditing,
   editingDisabled,
   mutating,
   onEdit,
 }: {
-  detail: SessionDetail;
+  detail: Pick<SessionDetail, "records"> & { diagnostics?: SessionDetail["diagnostics"] };
+  assistantLabel?: string;
+  sourceLabel?: string;
   allowAssistantEditing: boolean;
   editingDisabled: boolean;
   mutating: boolean;
@@ -322,7 +333,7 @@ export function TranscriptTimeline({
   const visibleRecords = detail.records.filter((record) => record.blocks.length > 0);
   return (
     <>
-      {detail.diagnostics.length > 0 && (
+      {(detail.diagnostics?.length ?? 0) > 0 && (
         <div
           style={{
             display: "flex",
@@ -338,8 +349,8 @@ export function TranscriptTimeline({
         >
           <AlertTriangle size={15} style={{ marginTop: 1, flexShrink: 0 }} />
           <div>
-            此会话有 {detail.diagnostics.length} 行无法解析，其他记录仍已加载。
-            <div style={{ marginTop: 3 }}>{detail.diagnostics[0]?.message}</div>
+            此会话有 {detail.diagnostics?.length ?? 0} 行无法解析，其他记录仍已加载。
+            <div style={{ marginTop: 3 }}>{detail.diagnostics?.[0]?.message}</div>
           </div>
         </div>
       )}
@@ -347,6 +358,8 @@ export function TranscriptTimeline({
         <RecordView
           key={`${record.lineIndex}-${record.rawHash}`}
           record={record}
+          assistantLabel={assistantLabel}
+          sourceLabel={sourceLabel}
           allowAssistantEditing={allowAssistantEditing}
           editingDisabled={editingDisabled}
           mutating={mutating}

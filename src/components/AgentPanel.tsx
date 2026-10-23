@@ -39,7 +39,15 @@ import {
 } from "lucide-react";
 
 /** Main conversation surface for the real pi event stream. */
-export function AgentPanel() {
+export function AgentPanel({
+  onShowHistory,
+  onNewSession,
+  extraHeaderActions,
+}: {
+  onShowHistory?: () => void;
+  onNewSession?: () => void;
+  extraHeaderActions?: React.ReactNode;
+} = {}) {
   const { agentTasks, agentRunning } = useUI();
   const { messages, streaming, send, steer, followUp, abort, queue } = useChat();
   /** how ⌘⏎ delivers a message typed while a turn is already running */
@@ -230,9 +238,14 @@ export function AgentPanel() {
           </SectionLabel>
         </div>
         <div style={{ display: "flex", alignItems: "center", paddingTop: 8 }}>
+          {extraHeaderActions}
           <IconButton
             label={t("agent.history")}
             onClick={() => {
+              if (onShowHistory) {
+                onShowHistory();
+                return;
+              }
               // history lives in the sidebar sessions list — make sure it shows
               if (!useUI.getState().sidebarOpen) useUI.getState().toggleSidebar();
             }}
@@ -241,7 +254,13 @@ export function AgentPanel() {
           </IconButton>
           <IconButton
             label={t("agent.newSession")}
-            onClick={() => useSessions.getState().newSession()}
+            onClick={() => {
+              if (onNewSession) {
+                onNewSession();
+                return;
+              }
+              void useSessions.getState().newSession();
+            }}
           >
             <SquarePen size={14} />
           </IconButton>

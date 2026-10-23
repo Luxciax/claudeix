@@ -5,6 +5,7 @@ import { Download, Package, Power, RefreshCw, Trash2, Upload } from "lucide-reac
 
 import { GroupRow, InsetGroup, IOSSwitch, SettingsPage } from "@/components/settings-ui";
 import { api } from "@/lib/tauri-api";
+import { EngineScopeSelector } from "@/features/engines/EngineScopeSelector";
 
 type PluginItem = {
   id: string;
@@ -131,6 +132,7 @@ export default function ClaudePluginsPage() {
       title="插件"
       subtitle="沿用 Pi Desktop 插件管理页面结构，底层使用 Claude Code 原生 plugin CLI。"
     >
+      <EngineScopeSelector />
       <InsetGroup header="Claude Code Plugins" footer="数据来自 claude plugin list --available --json。">
         <GroupRow
           first

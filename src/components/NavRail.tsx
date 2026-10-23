@@ -16,6 +16,8 @@ import { useUI } from "@/lib/store";
 import { useT, type MsgKey } from "@/lib/i18n";
 import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import { api } from "@/lib/tauri-api";
+import { usePi } from "@/lib/pi/store";
+import { useEngineSelection } from "@/features/engines/engine-selection";
 
 const ITEMS: { href: string; icon: React.ReactNode; labelKey: MsgKey }[] = [
   { href: "/", icon: <Sparkles size={17} />, labelKey: "nav.workspace" },
@@ -38,6 +40,8 @@ export function NavRail() {
   const pathname = usePathname();
   const zenMode = useUI((s) => s.zenMode);
   const runtime = useRuntimeStore((state) => state.snapshot);
+  const piStatus = usePi((state) => state.status);
+  const activeEngine = useEngineSelection((state) => state.activeEngine);
   const [installed, setInstalled] = useState(false);
   const t = useT();
 
@@ -137,11 +141,13 @@ export function NavRail() {
       {/* connection dot pinned to the bottom */}
       <span
         title={
-          runtime?.status === "running" || runtime?.status === "waiting_permission"
-            ? "Claude Code 正在运行"
-            : installed
-              ? "Claude Code 已就绪"
-              : "未检测到 Claude Code"
+          activeEngine === "pi"
+            ? `Pi：${piStatus}`
+            : runtime?.status === "running" || runtime?.status === "waiting_permission"
+              ? "Claude Code 正在运行"
+              : installed
+                ? "Claude Code 已就绪"
+                : "未检测到 Claude Code"
         }
         style={{
           marginTop: "auto",
@@ -149,15 +155,21 @@ export function NavRail() {
           height: 8,
           borderRadius: 99,
           background:
-            runtime?.status === "running" || runtime?.status === "waiting_permission"
-              ? STATUS_COLOR.running
-              : installed
-                ? STATUS_COLOR.ready
-                : STATUS_COLOR.disconnected,
+            activeEngine === "pi"
+              ? STATUS_COLOR[piStatus] ?? STATUS_COLOR.disconnected
+              : runtime?.status === "running" || runtime?.status === "waiting_permission"
+                ? STATUS_COLOR.running
+                : installed
+                  ? STATUS_COLOR.ready
+                  : STATUS_COLOR.disconnected,
           boxShadow:
-            runtime?.status === "running" || runtime?.status === "waiting_permission"
-              ? "0 0 0 4px var(--accent-muted)"
-              : "none",
+            activeEngine === "pi"
+              ? piStatus === "running"
+                ? "0 0 0 4px var(--accent-muted)"
+                : "none"
+              : runtime?.status === "running" || runtime?.status === "waiting_permission"
+                ? "0 0 0 4px var(--accent-muted)"
+                : "none",
         }}
       />
     </nav>

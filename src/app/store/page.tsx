@@ -14,6 +14,8 @@ import { Badge } from "@appica/ui-react/badge";
 import { usePiSettings, packageSource } from "@/lib/pi/settings";
 import { useT } from "@/lib/i18n";
 import ClaudeStorePage from "@/features/pi-shell/ClaudeStorePage";
+import { EngineScopeSelector } from "@/features/engines/EngineScopeSelector";
+import { useEngineSelection } from "@/features/engines/engine-selection";
 import { SettingsPage, InsetGroup, GroupRow, Segmented } from "@/components/settings-ui";
 import { Skeleton } from "@/components/primitives";
 import { AlertTriangle, Package, Check } from "lucide-react";
@@ -51,9 +53,16 @@ const MOCK_RESULTS: StorePkg[] = [
   { name: "pi-mcp-adapter", version: "2.1.0", description: "Use MCP servers as pi tools", publisher: "community" },
 ];
 
-export default ClaudeStorePage;
+export default function StorePage() {
+  const activeEngine = useEngineSelection((state) => state.activeEngine);
+  const initialized = useEngineSelection((state) => state.initialized);
+  if (!initialized) {
+    return <SettingsPage title="商店" subtitle="正在载入上次使用的 Agent…">{null}</SettingsPage>;
+  }
+  return activeEngine === "pi" ? <PiStorePage /> : <ClaudeStorePage />;
+}
 
-function LegacyStorePage() {
+function PiStorePage() {
   const settings = usePiSettings();
   const [all, setAll] = useState<StorePkg[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -157,6 +166,7 @@ function LegacyStorePage() {
       title={t("store.title")}
       subtitle={settings.mock ? t("store.subtitleMock") : t("store.subtitleLive")}
     >
+      <EngineScopeSelector />
       {/* search + install scope */}
       <InsetGroup
         header={t("store.search")}

@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"claudeix-pi-fixture","timestamp":"2026-08-11T12:00:00.000Z","cwd":"C:\\"}
+{"type":"session_info","id":"n1","parentId":null,"timestamp":"2026-08-11T12:00:01.000Z","name":"Claudeix Pi Fixture"}
+{"type":"message","id":"u1","parentId":"n1","timestamp":"2026-08-11T12:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"fixture user message"}],"timestamp":1786459202000}}
+{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-08-11T12:00:03.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"fixture thinking"},{"type":"text","text":"fixture assistant message"}],"api":"openai-responses","provider":"test","model":"fixture","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1786459203000}}
+{"type":"thinking_level_change","id":"3a753669","parentId":"a1","timestamp":"2026-08-11T12:45:26.257Z","thinkingLevel":"off"}

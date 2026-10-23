@@ -2,6 +2,7 @@
 
 import { ArchiveRestore, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useTrashStore } from "./trash-store";
 import type { TrashItemSummary, TrashRestoreResult } from "./types";
@@ -106,10 +107,12 @@ export function TrashPanel({
     }
   };
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <aside
       style={{
-        position: "absolute",
+        position: "fixed",
         top: 0,
         right: 0,
         bottom: 0,
@@ -415,6 +418,7 @@ export function TrashPanel({
           )}
         </div>
       </div>
-    </aside>
+    </aside>,
+    document.body,
   );
 }

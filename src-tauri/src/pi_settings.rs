@@ -19,10 +19,20 @@ pub(crate) fn home_dir() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .map_err(|_| format!("{VAR} is not set"))
 }
+
+pub(crate) fn pi_agent_dir() -> Result<PathBuf, String> {
+    if let Some(value) = std::env::var_os("PI_CODING_AGENT_DIR") {
+        if !value.is_empty() {
+            return Ok(PathBuf::from(value));
+        }
+    }
+    Ok(home_dir()?.join(".pi").join("agent"))
+}
+
 fn settings_path(scope: &str, root: Option<&str>) -> Result<PathBuf, String> {
     match scope {
-        "global" => Ok(home_dir()?.join(".pi").join("agent").join("settings.json")),
-        "models" => Ok(home_dir()?.join(".pi").join("agent").join("models.json")),
+        "global" => Ok(pi_agent_dir()?.join("settings.json")),
+        "models" => Ok(pi_agent_dir()?.join("models.json")),
         "project" => match root {
             Some(r) => Ok(PathBuf::from(r).join(".pi").join("settings.json")),
             None => std::env::current_dir()

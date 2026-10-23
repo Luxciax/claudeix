@@ -1016,7 +1016,10 @@ function LegacyClaudeixHome() {
           items={recoveryItems}
           resolvingId={recoveryResolvingId}
           error={recoveryError}
-          onResolve={(item, action) => void resolveStartupRecovery(item, action)}
+          onResolve={(item, action) => {
+            if ("engineId" in item) return;
+            void resolveStartupRecovery(item, action);
+          }}
         />
       )}
     </main>

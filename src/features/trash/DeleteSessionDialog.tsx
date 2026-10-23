@@ -2,6 +2,7 @@
 
 import { ArchiveX, X } from "lucide-react";
 
+import type { EngineTrashDeletePreview } from "@/features/engines/types";
 import type { TrashDeletePreview } from "./types";
 
 function formatBytes(value: number): string {
@@ -11,6 +12,7 @@ function formatBytes(value: number): string {
 }
 
 function purposeLabel(value: string): string {
+  if (value === "native_session") return "Agent 原生会话";
   if (value === "main_transcript") return "主会话 JSONL";
   if (value === "subagent_transcript") return "子代理会话";
   return "会话关联文件";
@@ -21,13 +23,16 @@ export function DeleteSessionDialog({
   mutating,
   onCancel,
   onConfirm,
+  agentLabel = "Claude Code",
 }: {
-  preview: TrashDeletePreview;
+  preview: TrashDeletePreview | EngineTrashDeletePreview;
   mutating: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  agentLabel?: string;
 }) {
   const blocked = preview.runtimeActive || preview.externalRuntimeActive;
+  const sessionId = "nativeSessionId" in preview ? preview.nativeSessionId : preview.sessionId;
   return (
     <div
       style={{
@@ -92,7 +97,7 @@ export function DeleteSessionDialog({
         <div style={{ overflow: "auto", padding: 17 }}>
           <div style={{ fontSize: 14, fontWeight: 650 }}>{preview.title}</div>
           <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-secondary)" }}>
-            sessionId：{preview.sessionId}
+            sessionId：{sessionId}
           </div>
           <div style={{ marginTop: 2, fontSize: 11, color: "var(--text-secondary)" }}>
             工作区：{preview.workspaceRoot}
@@ -108,9 +113,9 @@ export function DeleteSessionDialog({
             }}
           >
             共 {preview.totalFiles} 个文件，{formatBytes(preview.totalSize)}。
-            {preview.runtimeActive && " 当前 Claudeix 会话仍在运行，必须先停止。"}
+            {preview.runtimeActive && ` 当前 ${agentLabel} Runtime 仍在运行，必须先停止。`}
             {preview.externalRuntimeActive &&
-              ` 外部 Claude Code PID ${preview.externalRuntimePid ?? "未知"} 正在占用，暂时禁止删除。`}
+              ` 外部 ${agentLabel} PID ${preview.externalRuntimePid ?? "未知"} 正在占用，暂时禁止删除。`}
           </div>
 
           <div style={{ marginTop: 14, display: "grid", gap: 8 }}>

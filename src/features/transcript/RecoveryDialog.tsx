@@ -3,6 +3,9 @@
 import { RotateCcw, ShieldCheck, TriangleAlert } from "lucide-react";
 
 import type { EditRecoveryItem } from "@/features/sessions/types";
+import type { EngineMutationRecoveryItem } from "@/features/engines/types";
+
+export type RecoveryDialogItem = EditRecoveryItem | EngineMutationRecoveryItem;
 
 function stateLabel(state: string): string {
   if (state === "source_after") return "原 JSONL 已是本次修改后的版本";
@@ -14,6 +17,7 @@ function stateLabel(state: string): string {
 
 function operationLabel(operation: string): string {
   if (operation === "snapshot_restore") return "完整快照恢复";
+  if (operation === "restore") return "原生会话恢复";
   return "消息编辑";
 }
 
@@ -23,11 +27,11 @@ export function RecoveryDialog({
   error,
   onResolve,
 }: {
-  items: EditRecoveryItem[];
+  items: RecoveryDialogItem[];
   resolvingId: string | null;
   error: string | null;
   onResolve: (
-    item: EditRecoveryItem,
+    item: RecoveryDialogItem,
     action: "keep_current" | "restore_backup",
   ) => void;
 }) {
@@ -103,7 +107,10 @@ export function RecoveryDialog({
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <strong style={{ fontSize: 12 }}>{operationLabel(item.operation)}</strong>
+                    <strong style={{ fontSize: 12 }}>
+                      {"engineId" in item ? `${item.engineId} · ` : ""}
+                      {operationLabel(item.operation)}
+                    </strong>
                     <span
                       style={{
                         marginLeft: "auto",

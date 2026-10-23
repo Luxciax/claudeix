@@ -1,6 +1,77 @@
 # Changelog
 
-All notable changes to Pi Desktop will be documented in this file.
+## [0.2.3] — 2026-08-11
+
+### Fixed
+- **Pi 插件 / 商店重新接入** — 原 Pi Desktop 的插件与 `pi-package` 商店实现此前被 `export default ClaudePluginsPage / ClaudeStorePage` 完全遮蔽；现在根据当前 Agent 在 Claude / Pi 原生页面之间切换。
+- **Agent 选择跨页面持久化** — Claude / Pi 选择从首页局部 state 提升为全局持久状态；从 Pi 工作区进入插件、商店后不再错误加载 Claude 数据源，应用重启后也保留上次 Agent。
+- **Pi settings 路径适配** — 插件/商店读取与会话 Adapter 使用同一目录规则：优先 `PI_CODING_AGENT_DIR`，否则 `~/.pi/agent`。
+- **回收站入口可发现性** — Claude / Pi 会话侧栏都增加明确的“回收站 · 可恢复已删除会话”文字入口，不再只依赖 22px 图标。
+- **回收站抽屉裁剪** — Claude / Pi 回收站面板改为 Portal + fixed 抽屉，脱离 SessionSidebar 的 `overflow: hidden`，避免点击后面板被 248px 侧栏裁掉。
+- **NavRail Agent 状态** — 底部状态点跟随当前 Claude / Pi Agent，而不是始终显示 Claude 状态。
+
+### Verified
+- 本机 Pi `settings.json` 可读取，发现 7 个已配置 package 条目。
+- npm `pi-package` 商店源返回 HTTP 200 且允许 WebView CORS。
+- TypeScript 类型检查通过；Rust 44/44 测试通过。
+
+## [0.2.2] — 2026-08-11
+
+### Added
+- **Engine recycle bin** — 新增 `EngineTrashService`，Pi 删除不再是隐藏/软删除，而是把真实原生 JSONL 从 Pi Session 目录移动到 `~/.claudeix/trash/pi/`，保存 SHA-256、原路径、workspace、session id 与 manifest。
+- **Pi delete preview** — 删除前精确列出将移动的源文件、大小与占用状态；preview fingerprint 变化时拒绝执行，避免预览后文件被外部修改仍继续删除。
+- **Pi restore / exchange restore** — 原路径空闲时直接恢复；原路径存在不同版本时可先将当前版本移入新的回收站条目，再恢复旧版本，两份数据都保留。
+- **Engine trash crash recovery** — `.staging-*` 删除事务在下次启动自动回滚；若原路径已被不同内容占用则保留为 recovery-conflict，不猜测性覆盖。
+- **Pi recycle-bin UI** — 在现有 Pi SessionSidebar 增加回收站入口与逐会话删除按钮，继续复用现有 Claudeix 删除预览交互风格。
+- **Managed/external Pi PID distinction** — Claudeix 自己启动的 Pi 子进程不再被误报为外部写入者；只有当前 resume session 冲突才阻止删除/恢复。
+
+### Verified
+- TypeScript `npx tsc --noEmit` 通过。
+- Rust 44/44 测试通过。
+- 文件系统 round-trip 测试覆盖 `source → trash payload → restore → byte-identical source`。
+- exchange restore 测试验证冲突当前版本被完整保存为新的回收站条目。
+
+## [0.2.1] — 2026-08-11
+
+### Added
+- **Pi RPC Runtime** — 新增独立 `pi --mode rpc` 进程桥，支持 `--session <path>` 精确 Resume、JSONL stdin/stdout、stderr/exit 事件、显式 Stop，并在 Pi 自行退出后按 PID 自动清理运行状态，避免旧桥残留“幽灵进程”状态。
+- **Claude / Pi Engine Switch** — 在现有 Pi → Claude UI 左侧增加轻量 Agent 切换，不重做布局；Claude 继续走原有 Claudeix 面板，Pi 使用同一套桌面交互风格。
+- **Pi Native Session UI** — 左侧直接扫描 Pi 原生 Session，不再使用旧 Pi Desktop 自建 SQLite 会话历史作为事实来源；选择会话后以 `--session` 启动真实 Pi Runtime。
+- **Pi Native Edit Drawer** — 复用统一 `TranscriptTimeline` 显示和编辑 Pi 原生消息；编辑前自动停止当前 Pi RPC，事务写入成功后再 Resume 原 Session，保持外部写入保护严格有效。
+- **Source-authoritative runtime sync** — Pi 回合结束后从 `get_state` 获取真实 `sessionFile/sessionId`，重新扫描并读取源 JSONL，用原生 Session 刷新 UI，避免实时流状态与磁盘事实长期分叉。
+- **Generic mutation recovery UI** — AppShell 启动恢复界面同时检查 Claude 事务和多 Engine mutation 事务，可保留当前结果或恢复自动备份。
+
+### Changed
+- `TranscriptTimeline` 支持传入 Agent / Source 标签，同一编辑组件可服务 Claude 与 Pi。
+- `AgentPanel` 增加宿主回调和 Header Action 插槽，Pi 可以复用成熟 ModelPicker、Steer / Queue、工具调用、Extension UI 与流式交互，而无需复制聊天面板。
+
+### Verified
+- `npx tsc --noEmit` 通过。
+- Rust 测试 40/40 通过。
+- Next.js 静态导出已重新生成，`out/index.html` 包含最新 Engine 切换 UI。
+
+---
+
+## [0.2.0] — 2026-08-11
+
+### Added
+- **Multi-Agent Engine Registry** — 新增能力驱动的 `EngineRegistry` / `EngineAdapter` 架构，保留现有 Pi → Claude UI，不重做产品界面。
+- **Claude Adapter** — 将现有 Claude 会话扫描、Timeline 与能力描述接入统一 Engine API，原 Claude Runtime / 编辑 / 回收站仍复用成熟实现。
+- **Pi Adapter** — 支持 `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR`，扫描 Pi v3 JSONL，会按 `id → parentId` 重建当前分支并映射到统一 TranscriptRecord。
+- **Pi transactional editing** — Pi 用户/助手可见文本支持稳定 `entry id + content index + record hash` 定位，候选 JSONL 只修改目标字段；编辑前会阻止可能正在写同一 session/workspace 的外部 Pi 进程。
+- **Generic file mutation transaction** — 新增源 revision 检查、完整快照、二次冲突检查、临时文件 fsync、结构校验、Windows write-through 原子替换、提交后 revision 验证、自动回滚和 SQLite 状态审计。
+- **Mutation restore / crash recovery** — 支持从 mutation 快照恢复；可识别 `source_before` / `source_after` / `source_unknown` / `source_missing`，并提供保留当前或恢复备份的恢复接口。
+- **Pi native compatibility fixture** — 新增 Pi v3 固定夹具与可选真实 CLI 集成测试；使用 `PI_OFFLINE=1` 验证修改后的 JSONL 可被本机 `pi --session <path> --print --mode json` 原生加载。
+- 新增 `docs/SESSION_FORMAT_RESEARCH.md` 与 `docs/ADAPTER_COMPATIBILITY_MATRIX.md`。
+
+### Verified
+- `npx tsc --noEmit` 通过。
+- Rust 测试 36/36 通过，包括真实 Pi CLI 离线兼容探针与崩溃恢复状态检测。
+- 事务测试覆盖 `snapshot → atomic replace → committed audit → restore → committed audit`。
+
+---
+
+The sections below are retained from the Pi Desktop UI baseline history.
 
 ## [0.5.0] — 2026-08-06
 

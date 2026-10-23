@@ -55,9 +55,9 @@ const MOCK_INFO: UpdateInfo = {
   configured: true,
   repoUrl: REPO_URL,
   currentVersion: APP_VERSION,
-  latestVersion: "v0.2.0",
+  latestVersion: "v0.2.3",
   latestCommit: "9f3ab12",
-  updateAvailable: true,
+  updateAvailable: false,
 };
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));

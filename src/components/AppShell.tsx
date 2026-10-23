@@ -13,12 +13,12 @@ import { useUI } from "@/lib/store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isNativeQuitInProgress, requestClose } from "@/lib/window-close";
 import { CloseConfirmDialog } from "./CloseConfirmDialog";
-import { RecoveryDialog } from "@/features/transcript/RecoveryDialog";
-import type { EditRecoveryItem } from "@/features/sessions/types";
+import { RecoveryDialog, type RecoveryDialogItem } from "@/features/transcript/RecoveryDialog";
 import { useRuntimeStore } from "@/features/runtime/runtime-store";
 import { useClaudeModel } from "@/features/runtime/model-store";
 import { useSessionStore } from "@/features/sessions/session-store";
 import { api, isTauriRuntime } from "@/lib/tauri-api";
+import { useEngineSelection } from "@/features/engines/engine-selection";
 
 /** Pi Desktop chrome retained as Claudeix's root shell. */
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -32,7 +32,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 function MainShell({ children }: { children: React.ReactNode }) {
-  const [recoveryItems, setRecoveryItems] = useState<EditRecoveryItem[]>([]);
+  const [recoveryItems, setRecoveryItems] = useState<RecoveryDialogItem[]>([]);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
@@ -41,6 +41,7 @@ function MainShell({ children }: { children: React.ReactNode }) {
     useUI.getState().initTheme();
     useUI.getState().initCloseBehavior();
     useAppearance.getState().init();
+    useEngineSelection.getState().init();
 
     let disposeRuntime: () => void = () => undefined;
     let closeUnlisten: (() => void) | undefined;
@@ -57,10 +58,9 @@ function MainShell({ children }: { children: React.ReactNode }) {
 
     if (isTauriRuntime()) {
       document.addEventListener("contextmenu", preventDefaultCtx);
-      void api
-        .listTranscriptRecovery()
-        .then((items) => {
-          setRecoveryItems(items);
+      void Promise.all([api.listTranscriptRecovery(), api.listEngineMutationRecovery()])
+        .then(([claudeItems, engineItems]) => {
+          setRecoveryItems([...claudeItems, ...engineItems]);
           setRecoveryError(null);
         })
         .catch((error) => setRecoveryError(`无法检查未完成会话事务：${String(error)}`));
@@ -85,15 +85,22 @@ function MainShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const resolveRecovery = async (
-    item: EditRecoveryItem,
+    item: RecoveryDialogItem,
     action: "keep_current" | "restore_backup",
   ) => {
     setResolvingId(item.transactionId);
     setRecoveryError(null);
     try {
-      await api.resolveTranscriptRecovery({ transactionId: item.transactionId, action });
-      const items = await api.listTranscriptRecovery();
-      setRecoveryItems(items);
+      if ("engineId" in item) {
+        await api.resolveEngineMutationRecovery({ transactionId: item.transactionId, action });
+      } else {
+        await api.resolveTranscriptRecovery({ transactionId: item.transactionId, action });
+      }
+      const [claudeItems, engineItems] = await Promise.all([
+        api.listTranscriptRecovery(),
+        api.listEngineMutationRecovery(),
+      ]);
+      setRecoveryItems([...claudeItems, ...engineItems]);
       const root = useWorkspace.getState().root;
       if (root) await useSessionStore.getState().scan(root, true);
     } catch (error) {

@@ -48,6 +48,10 @@ pub fn claudeix_backups_dir() -> Result<PathBuf, String> {
     Ok(claudeix_data_dir()?.join("backups"))
 }
 
+pub fn claudeix_trash_dir() -> Result<PathBuf, String> {
+    Ok(claudeix_data_dir()?.join("trash"))
+}
+
 pub fn claudeix_database_path() -> Result<PathBuf, String> {
     Ok(claudeix_data_dir()?.join("claudeix.db"))
 }

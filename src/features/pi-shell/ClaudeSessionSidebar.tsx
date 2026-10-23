@@ -168,9 +168,6 @@ export function ClaudeSessionSidebar() {
               会话
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-              <SidebarIconButton title="回收站" onClick={() => setShowTrash(true)}>
-                <Trash2 size={13} />
-              </SidebarIconButton>
               <SidebarIconButton title="刷新会话" onClick={() => void refresh()} disabled={loading}>
                 <RefreshCw size={13} className={loading ? "animate-spin" : undefined} />
               </SidebarIconButton>
@@ -179,6 +176,18 @@ export function ClaudeSessionSidebar() {
               </SidebarIconButton>
             </div>
           </div>
+
+          <button
+            onClick={() => setShowTrash(true)}
+            style={trashEntryStyle}
+            title="打开 Claude 回收站"
+          >
+            <Trash2 size={13} />
+            <span>回收站</span>
+            <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-tertiary)" }}>
+              可恢复已删除会话
+            </span>
+          </button>
 
           {error && (
             <div style={{ padding: "5px 16px 8px", color: "var(--danger)", fontSize: 11 }}>
@@ -437,5 +446,20 @@ const collapseButtonStyle: React.CSSProperties = {
   borderRadius: 8,
   background: "transparent",
   color: "var(--text-tertiary)",
+  cursor: "pointer",
+};
+
+const trashEntryStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 7,
+  width: "calc(100% - 16px)",
+  margin: "2px 8px 7px",
+  padding: "7px 9px",
+  border: "1px solid var(--separator)",
+  borderRadius: 8,
+  background: "var(--bg-elevated)",
+  color: "var(--text-secondary)",
+  fontSize: 11,
   cursor: "pointer",
 };

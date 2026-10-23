@@ -16,6 +16,20 @@ import type {
 } from "@/features/sessions/types";
 import type { ExternalRuntimeInfo, RuntimeSnapshot } from "@/features/runtime/types";
 import type {
+  EngineEditResult,
+  EngineDescriptor,
+  EngineMutationRecoveryItem,
+  EngineMutationRecoveryResolveResult,
+  NativeSessionDetail,
+  NativeSessionSummary,
+  EngineRestoreResult,
+  EngineTrashDeletePreview,
+  EngineTrashItemSummary,
+  EngineTrashPurgePreview,
+  EngineTrashRestorePreview,
+  EngineTrashRestoreResult,
+} from "@/features/engines/types";
+import type {
   TrashDeletePreview,
   TrashItemSummary,
   TrashPurgePreview,
@@ -34,6 +48,65 @@ export type ClaudeSettingsFile = {
 };
 
 export const api = {
+  listEngines: () => invoke<EngineDescriptor[]>("engine_list"),
+  scanEngineSessions: (engineId: string, workspaceRoot: string) =>
+    invoke<NativeSessionSummary[]>("engine_session_scan", { engineId, workspaceRoot }),
+  getEngineSession: (engineId: string, sessionKey: string, workspaceRoot: string) =>
+    invoke<NativeSessionDetail>("engine_session_get", {
+      engineId,
+      sessionKey,
+      workspaceRoot,
+    }),
+  editEngineMessage: (request: {
+    engineId: string;
+    sessionKey: string;
+    workspaceRoot: string;
+    expectedSourceRevision: string;
+    target: EditTarget;
+    newText: string;
+  }) => invoke<EngineEditResult>("engine_edit_message", { request }),
+  restoreEngineMutation: (request: {
+    engineId: string;
+    sessionKey: string;
+    workspaceRoot: string;
+    transactionId: string;
+    expectedSourceRevision: string;
+  }) => invoke<EngineRestoreResult>("engine_restore_mutation", { request }),
+  listEngineMutationRecovery: () =>
+    invoke<EngineMutationRecoveryItem[]>("engine_mutation_recovery_list"),
+  resolveEngineMutationRecovery: (request: {
+    transactionId: string;
+    action: "keep_current" | "restore_backup";
+  }) =>
+    invoke<EngineMutationRecoveryResolveResult>("engine_mutation_recovery_resolve", { request }),
+  previewEngineTrashDelete: (engineId: string, sessionKey: string, workspaceRoot: string) =>
+    invoke<EngineTrashDeletePreview>("engine_trash_delete_preview", {
+      engineId,
+      sessionKey,
+      workspaceRoot,
+    }),
+  moveEngineSessionToTrash: (request: {
+    engineId: string;
+    sessionKey: string;
+    workspaceRoot: string;
+    expectedPreviewFingerprint: string;
+  }) => invoke<EngineTrashItemSummary>("engine_trash_move", { request }),
+  listEngineTrash: (engineId?: string | null) =>
+    invoke<EngineTrashItemSummary[]>("engine_trash_list", { engineId: engineId ?? null }),
+  previewEngineTrashRestore: (trashId: string) =>
+    invoke<EngineTrashRestorePreview>("engine_trash_restore_preview", { trashId }),
+  restoreEngineTrash: (request: {
+    trashId: string;
+    strategy: "safe" | "exchange";
+    expectedPreviewFingerprint: string;
+  }) => invoke<EngineTrashRestoreResult>("engine_trash_restore", { request }),
+  previewEngineTrashPurge: (trashId: string) =>
+    invoke<EngineTrashPurgePreview>("engine_trash_purge_preview", { trashId }),
+  purgeEngineTrash: (request: {
+    trashId: string;
+    confirmationText: string;
+    expectedPreviewFingerprint: string;
+  }) => invoke<void>("engine_trash_purge", { request }),
   claudeStatus: () => invoke<ClaudeStatus>("claude_status"),
   claudeConfig: () => invoke<ClaudeConfig>("claude_config"),
   readClaudeSettings: (scope: "global" | "project", workspaceRoot?: string | null) =>

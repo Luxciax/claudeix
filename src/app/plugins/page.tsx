@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Button } from "@appica/ui-react/button";
 import { usePi } from "@/lib/pi/store";
 import ClaudePluginsPage from "@/features/pi-shell/ClaudePluginsPage";
+import { EngineScopeSelector } from "@/features/engines/EngineScopeSelector";
+import { useEngineSelection } from "@/features/engines/engine-selection";
 import {
   usePiSettings,
   packageSource,
@@ -53,9 +55,16 @@ function parseSource(src: string): { kind: string; name: string; version?: strin
   return { kind: "local", name: src };
 }
 
-export default ClaudePluginsPage;
+export default function PluginsPage() {
+  const activeEngine = useEngineSelection((state) => state.activeEngine);
+  const initialized = useEngineSelection((state) => state.initialized);
+  if (!initialized) {
+    return <SettingsPage title="插件" subtitle="正在载入上次使用的 Agent…">{null}</SettingsPage>;
+  }
+  return activeEngine === "pi" ? <PiPluginsPage /> : <ClaudePluginsPage />;
+}
 
-function LegacyPluginsPage() {
+function PiPluginsPage() {
   const { commands, mock, refresh } = usePi();
   const settings = usePiSettings();
   const [removing, setRemoving] = useState<string | null>(null);
@@ -134,6 +143,7 @@ function LegacyPluginsPage() {
       title={t("plugins.title")}
       subtitle={mock ? t("plugins.subtitleMock") : t("plugins.subtitleLive")}
     >
+      <EngineScopeSelector />
       <InsetGroup
         header={t("plugins.globalHeader")}
         footer={t("plugins.globalFooter")}

@@ -1,6 +1,11 @@
 mod app_paths;
 mod claude;
+mod engine;
+mod engines;
 mod fs_bridge;
+mod mutation;
+mod pi_command;
+mod pi_settings;
 mod process_utils;
 mod projects;
 mod updater;
@@ -18,6 +23,7 @@ use tauri::{
 use claude::{RuntimeRegistry, SessionCatalog};
 use transcript::editor::TranscriptEditor;
 use trash::service::TrashService;
+use engines::pi::runtime::PiRuntimeState;
 
 /// Keep the main window fully inside the current monitor's work area: shrink it
 /// if it is larger than the work area, then clamp its position. Without this,
@@ -85,6 +91,7 @@ fn open_external(url: String) -> Result<(), String> {
 /// runtime process owned by this application.
 fn quit_application(app: &tauri::AppHandle) {
     app.state::<RuntimeRegistry>().stop_all();
+    app.state::<PiRuntimeState>().stop_all();
     app.exit(0);
 }
 
@@ -195,11 +202,35 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(RuntimeRegistry::default())
+        .manage(PiRuntimeState::default())
+        .manage(engine::EngineRegistry::default())
+        .manage(mutation::MutationCoordinator::default())
         .manage(TranscriptEditor::default())
         .manage(TrashService::default())
+        .manage(trash::engine_service::EngineTrashService::default())
         .manage(SessionCatalog::default())
         .invoke_handler(tauri::generate_handler![
             claude::commands::claude_status,
+            engine::engine_list,
+            engine::engine_session_scan,
+            engine::engine_session_get,
+            mutation::engine_edit_message,
+            mutation::engine_restore_mutation,
+            mutation::engine_mutation_recovery_list,
+            mutation::engine_mutation_recovery_resolve,
+            trash::engine_service::engine_trash_delete_preview,
+            trash::engine_service::engine_trash_move,
+            trash::engine_service::engine_trash_list,
+            trash::engine_service::engine_trash_restore_preview,
+            trash::engine_service::engine_trash_restore,
+            trash::engine_service::engine_trash_purge_preview,
+            trash::engine_service::engine_trash_purge,
+            engines::pi::runtime::pi_start,
+            engines::pi::runtime::pi_send,
+            engines::pi::runtime::pi_stop,
+            pi_settings::pi_settings_read,
+            pi_settings::pi_settings_write,
+            pi_settings::pi_cli,
             claude::commands::claude_config,
             claude::settings::claude_settings_read,
             claude::settings::claude_settings_write,
@@ -243,6 +274,11 @@ pub fn run() {
             open_external
         ])
         .setup(|app| {
+            if let Ok(warnings) = trash::engine_service::recover_engine_trash_staging() {
+                for warning in warnings {
+                    eprintln!("[engine-trash] {warning}");
+                }
+            }
             if let Err(e) = create_tray(app) {
                 eprintln!("[tray] failed to create system tray: {e}");
             }
