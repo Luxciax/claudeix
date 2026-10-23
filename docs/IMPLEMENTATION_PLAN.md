@@ -1,5 +1,7 @@
 # Claudeix 具体实现开发文档
 
+> 版本说明：本文保留一期 Claude-only 设计历史。v0.2.3 已支持 Claude 与新 Pi Engine；本轮开发以 AGENTS.md 和 [选择性移植实施文档](SELECTIVE_PORT_IMPLEMENTATION.md) 为准，不据此移除现有双引擎。
+
 ## 1. 文档目的
 
 本文档用于指导 Claudeix 从当前原型改造成可实际使用的 Claude Code 桌面客户端。

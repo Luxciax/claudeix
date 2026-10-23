@@ -1,5 +1,7 @@
 # Claudeix 架构设计
 
+> 版本说明：本文保留一期 Claude-only 设计历史。v0.2.3 已支持 Claude 与新 Pi Engine；本轮开发以 AGENTS.md 和 [选择性移植实施文档](SELECTIVE_PORT_IMPLEMENTATION.md) 为准，不据此移除现有双引擎。
+
 ## 1. 产品定位
 
 Claudeix 是 Claude Code 的专用桌面客户端，不是会话查看器，也不是必须先把会话拖进“工作台”才能运行的调度面板。
