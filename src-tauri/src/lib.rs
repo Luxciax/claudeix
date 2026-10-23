@@ -232,6 +232,8 @@ pub fn run() {
             pi_settings::pi_settings_write,
             pi_settings::pi_cli,
             claude::commands::claude_config,
+            claude::providers::claude_provider_profiles_read,
+            claude::providers::claude_provider_profiles_write,
             claude::settings::claude_settings_read,
             claude::settings::claude_settings_write,
             claude::settings::claude_plugins_list,
