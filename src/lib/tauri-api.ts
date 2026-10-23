@@ -47,32 +47,6 @@ export type ClaudeSettingsFile = {
   content: string;
 };
 
-export type ClaudeProviderKind = "anthropic" | "gateway" | "bedrock" | "vertex" | "foundry";
-
-export type ClaudeProviderProfile = {
-  id: string;
-  name: string;
-  kind: ClaudeProviderKind;
-  baseUrl: string;
-  apiKey: string;
-  authToken: string;
-  model: string;
-  opusModel: string;
-  sonnetModel: string;
-  haikuModel: string;
-  subagentModel: string;
-  enableModelDiscovery: boolean;
-  customHeaders: string;
-  extraEnv: Record<string, string>;
-};
-
-export type ClaudeProviderStore = {
-  version: number;
-  activeProfileId: string | null;
-  profiles: ClaudeProviderProfile[];
-  path?: string | null;
-};
-
 export const api = {
   listEngines: () => invoke<EngineDescriptor[]>("engine_list"),
   scanEngineSessions: (engineId: string, workspaceRoot: string) =>
@@ -135,9 +109,6 @@ export const api = {
   }) => invoke<void>("engine_trash_purge", { request }),
   claudeStatus: () => invoke<ClaudeStatus>("claude_status"),
   claudeConfig: () => invoke<ClaudeConfig>("claude_config"),
-  readClaudeProviderProfiles: () => invoke<ClaudeProviderStore>("claude_provider_profiles_read"),
-  writeClaudeProviderProfiles: (store: ClaudeProviderStore) =>
-    invoke<ClaudeProviderStore>("claude_provider_profiles_write", { store }),
   readClaudeSettings: (scope: "global" | "project", workspaceRoot?: string | null) =>
     invoke<ClaudeSettingsFile>("claude_settings_read", {
       scope,
