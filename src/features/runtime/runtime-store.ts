@@ -14,6 +14,7 @@ type StartRequest = {
   sessionKey: string | null;
   prompt: string;
   permissionMode: string;
+  providerId?: string | null;
   model?: string | null;
   effort?: string | null;
 };
