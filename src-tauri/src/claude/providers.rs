@@ -10,6 +10,18 @@ const SUPPORTED_KINDS: &[&str] = &["anthropic", "gateway", "bedrock", "vertex", 
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct ClaudeProviderModel {
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub behaves_as: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ClaudeProviderProfile {
     pub id: String,
     pub name: String,
@@ -32,6 +44,12 @@ pub struct ClaudeProviderProfile {
     pub subagent_model: String,
     #[serde(default)]
     pub enable_model_discovery: bool,
+    #[serde(default)]
+    pub model_picker_enabled: bool,
+    #[serde(default)]
+    pub replace_builtin_models: bool,
+    #[serde(default)]
+    pub models: Vec<ClaudeProviderModel>,
     #[serde(default)]
     pub custom_headers: String,
     #[serde(default)]
@@ -84,6 +102,17 @@ fn validate(store: &ClaudeProviderStore) -> Result<(), String> {
         }
         if !SUPPORTED_KINDS.contains(&profile.kind.as_str()) {
             return Err(format!("provider {id} uses unsupported kind: {}", profile.kind));
+        }
+
+        let mut model_ids = HashSet::new();
+        for model in &profile.models {
+            let model_id = model.id.trim();
+            if model_id.is_empty() {
+                return Err(format!("provider {id} contains a model with an empty id"));
+            }
+            if !model_ids.insert(model_id.to_string()) {
+                return Err(format!("provider {id} contains duplicate model id: {model_id}"));
+            }
         }
     }
 
