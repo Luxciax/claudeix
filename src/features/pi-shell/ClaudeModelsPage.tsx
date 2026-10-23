@@ -25,7 +25,6 @@ import {
 import {
   api,
   type ClaudeProviderKind,
-  type ClaudeProviderModel,
   type ClaudeProviderProfile,
   type ClaudeProviderStore,
   type ClaudeSettingsFile,
@@ -95,9 +94,6 @@ function emptyProfile(kind: ClaudeProviderKind = "gateway"): ClaudeProviderProfi
     haikuModel: "",
     subagentModel: "",
     enableModelDiscovery: kind === "gateway",
-    modelPickerEnabled: false,
-    replaceBuiltinModels: false,
-    models: [],
     customHeaders: "",
     extraEnv: {},
   };
@@ -153,6 +149,7 @@ function envForProfile(profile: ClaudeProviderProfile): JsonObject {
     setIf(env, "ANTHROPIC_FOUNDRY_API_KEY", profile.apiKey);
   }
 
+  setIf(env, "ANTHROPIC_MODEL", profile.model);
   setIf(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", profile.opusModel);
   setIf(env, "ANTHROPIC_DEFAULT_SONNET_MODEL", profile.sonnetModel);
   setIf(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL", profile.haikuModel);
@@ -163,20 +160,6 @@ function envForProfile(profile: ClaudeProviderProfile): JsonObject {
     if (key.trim() && value.trim()) env[key.trim()] = value.trim();
   }
   return env;
-}
-
-function modelPickerForProfile(profile: ClaudeProviderProfile): JsonObject {
-  return {
-    replaceBuiltInOptions: profile.replaceBuiltinModels,
-    options: profile.models
-      .filter((model) => model.id.trim())
-      .map((model) => ({
-        model: model.id.trim(),
-        ...(model.label.trim() ? { label: model.label.trim() } : {}),
-        ...(model.description.trim() ? { description: model.description.trim() } : {}),
-        ...(model.behavesAs.trim() ? { behavesAs: model.behavesAs.trim() } : {}),
-      })),
-  };
 }
 
 function parseExtraEnv(value: string): Record<string, string> {
@@ -288,12 +271,6 @@ export default function ClaudeModelsPage() {
 
       if (profile.model.trim()) next.model = profile.model.trim();
       else delete next.model;
-
-      if (profile.modelPickerEnabled) {
-        next.modelPicker = modelPickerForProfile(profile);
-      } else if (store.activeProfileId) {
-        delete next.modelPicker;
-      }
 
       const savedFile = await api.writeClaudeSettings(
         scope,
@@ -407,7 +384,6 @@ export default function ClaudeModelsPage() {
                   kindLabel(profile.kind),
                   profile.baseUrl || null,
                   profile.model ? `模型：${profile.model}` : "模型跟随默认",
-                  profile.modelPickerEnabled ? `${profile.models.length} 个可选模型` : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -501,34 +477,6 @@ function ProviderEditor({
   busy: boolean;
 }) {
   const patch = (value: Partial<ClaudeProviderProfile>) => onChange({ ...profile, ...value });
-  const [modelDraft, setModelDraft] = useState<ClaudeProviderModel>({
-    id: "",
-    label: "",
-    description: "",
-    behavesAs: "",
-  });
-
-  const addModel = () => {
-    const id = modelDraft.id.trim();
-    if (!id || profile.models.some((model) => model.id === id)) return;
-    patch({
-      modelPickerEnabled: true,
-      models: [
-        ...profile.models,
-        {
-          id,
-          label: modelDraft.label.trim(),
-          description: modelDraft.description.trim(),
-          behavesAs: modelDraft.behavesAs.trim(),
-        },
-      ],
-    });
-    setModelDraft({ id: "", label: "", description: "", behavesAs: "" });
-  };
-
-  const removeModel = (id: string) => {
-    patch({ models: profile.models.filter((model) => model.id !== id) });
-  };
 
   return (
     <div style={overlayStyle}>
@@ -607,110 +555,6 @@ function ProviderEditor({
             <TextRow label="Sonnet 映射" value={profile.sonnetModel} onCommit={(sonnetModel) => patch({ sonnetModel: sonnetModel ?? "" })} />
             <TextRow label="Haiku 映射" value={profile.haikuModel} onCommit={(haikuModel) => patch({ haikuModel: haikuModel ?? "" })} />
             <TextRow label="Subagent 模型" value={profile.subagentModel} onCommit={(subagentModel) => patch({ subagentModel: subagentModel ?? "" })} />
-          </InsetGroup>
-
-          <InsetGroup
-            header="可选模型列表"
-            footer="开启后生成 Claude Code 的 modelPicker。可加入 Provider 自己的模型 ID；behavesAs 用于告诉 Claude Code 按哪个已知 Claude 模型的客户端能力处理它。"
-          >
-            <label style={switchRowStyle}>
-              <span>
-                <strong style={{ display: "block", fontSize: 12 }}>管理 /model 模型列表</strong>
-                <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
-                  适合一个网关同时提供多个模型的情况
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                checked={profile.modelPickerEnabled}
-                onChange={(event) => patch({ modelPickerEnabled: event.target.checked })}
-              />
-            </label>
-
-            {profile.modelPickerEnabled && (
-              <>
-                <label style={{ ...switchRowStyle, borderTop: "1px solid var(--separator)" }}>
-                  <span>
-                    <strong style={{ display: "block", fontSize: 12 }}>替换内置模型列表</strong>
-                    <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
-                      关闭时保留 Claude Code 自带模型，并把下面模型追加进去
-                    </span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={profile.replaceBuiltinModels}
-                    onChange={(event) => patch({ replaceBuiltinModels: event.target.checked })}
-                  />
-                </label>
-
-                {profile.models.length > 0 && (
-                  <div style={{ display: "grid", gap: 6, padding: "8px 12px", borderTop: "1px solid var(--separator)" }}>
-                    {profile.models.map((model) => (
-                      <div key={model.id} style={modelRowStyle}>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ fontSize: 11.5, fontWeight: 650, wordBreak: "break-all" }}>
-                            {model.label || model.id}
-                          </div>
-                          <div style={{ marginTop: 2, fontSize: 9.5, color: "var(--text-secondary)", wordBreak: "break-all" }}>
-                            {model.id}
-                            {model.behavesAs ? ` · behavesAs: ${model.behavesAs}` : ""}
-                          </div>
-                          {model.description && (
-                            <div style={{ marginTop: 2, fontSize: 9.5, color: "var(--text-tertiary)" }}>
-                              {model.description}
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          style={{ ...iconButtonStyle, color: "var(--danger)" }}
-                          onClick={() => removeModel(model.id)}
-                          title="移除模型"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div style={modelAddGridStyle}>
-                  <input
-                    value={modelDraft.id}
-                    onChange={(event) => setModelDraft({ ...modelDraft, id: event.target.value })}
-                    placeholder="模型 ID，例如 provider/model-name"
-                    style={compactInputStyle}
-                  />
-                  <input
-                    value={modelDraft.label}
-                    onChange={(event) => setModelDraft({ ...modelDraft, label: event.target.value })}
-                    placeholder="显示名称（可选）"
-                    style={compactInputStyle}
-                  />
-                  <input
-                    value={modelDraft.behavesAs}
-                    onChange={(event) => setModelDraft({ ...modelDraft, behavesAs: event.target.value })}
-                    placeholder="behavesAs（可选，已知 Claude 模型 ID）"
-                    style={compactInputStyle}
-                  />
-                  <input
-                    value={modelDraft.description}
-                    onChange={(event) => setModelDraft({ ...modelDraft, description: event.target.value })}
-                    placeholder="说明（可选）"
-                    style={compactInputStyle}
-                  />
-                  <button
-                    style={{ ...addButtonStyle, justifyContent: "center" }}
-                    onClick={addModel}
-                    disabled={
-                      !modelDraft.id.trim() ||
-                      profile.models.some((model) => model.id === modelDraft.id.trim())
-                    }
-                  >
-                    <Plus size={13} /> 添加模型
-                  </button>
-                </div>
-              </>
-            )}
           </InsetGroup>
 
           {profile.kind === "gateway" && (
@@ -952,34 +796,6 @@ const switchRowStyle: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "space-between",
   gap: 12,
-};
-
-const modelRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  padding: "8px 9px",
-  border: "1px solid var(--separator)",
-  borderRadius: 8,
-  background: "var(--bg-elevated)",
-};
-
-const modelAddGridStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: 7,
-  padding: 12,
-  borderTop: "1px solid var(--separator)",
-};
-
-const compactInputStyle: React.CSSProperties = {
-  minWidth: 0,
-  padding: "7px 8px",
-  border: "1px solid var(--separator)",
-  borderRadius: 8,
-  background: "var(--bg-sunken)",
-  color: "var(--text-primary)",
-  fontSize: 10.5,
 };
 
 const textareaStyle: React.CSSProperties = {

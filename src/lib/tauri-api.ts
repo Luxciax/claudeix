@@ -49,13 +49,6 @@ export type ClaudeSettingsFile = {
 
 export type ClaudeProviderKind = "anthropic" | "gateway" | "bedrock" | "vertex" | "foundry";
 
-export type ClaudeProviderModel = {
-  id: string;
-  label: string;
-  description: string;
-  behavesAs: string;
-};
-
 export type ClaudeProviderProfile = {
   id: string;
   name: string;
@@ -69,9 +62,6 @@ export type ClaudeProviderProfile = {
   haikuModel: string;
   subagentModel: string;
   enableModelDiscovery: boolean;
-  modelPickerEnabled: boolean;
-  replaceBuiltinModels: boolean;
-  models: ClaudeProviderModel[];
   customHeaders: string;
   extraEnv: Record<string, string>;
 };
